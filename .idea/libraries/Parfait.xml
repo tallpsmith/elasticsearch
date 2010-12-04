@@ -1,0 +1,23 @@
+<component name="libraryTable">
+  <library name="Parfait">
+    <CLASSES>
+      <root url="jar://$MAVEN_REPOSITORY$/com/custardsource/parfait/parfait-core/0.2.5/parfait-core-0.2.5.jar!/" />
+      <root url="jar://$MAVEN_REPOSITORY$/com/custardsource/parfait/parfait-pcp/0.2.5/parfait-pcp-0.2.5.jar!/" />
+      <root url="jar://$MAVEN_REPOSITORY$/com/custardsource/parfait/parfait-io/0.2.5/parfait-io-0.2.5.jar!/" />
+      <root url="jar://$MAVEN_REPOSITORY$/com/custardsource/parfait/dxm/0.2.5/dxm-0.2.5.jar!/" />
+      <root url="jar://$MAVEN_REPOSITORY$/com/google/guava/guava/r06/guava-r06.jar!/" />
+      <root url="jar://$MAVEN_REPOSITORY$/commons-io/commons-io/1.4/commons-io-1.4.jar!/" />
+      <root url="jar://$MAVEN_REPOSITORY$/javax/measure/jsr-275/0.9.1/jsr-275-0.9.1.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="jar://$MAVEN_REPOSITORY$/com/custardsource/parfait/parfait-core/0.2.5/parfait-core-0.2.5-sources.jar!/" />
+      <root url="jar://$MAVEN_REPOSITORY$/com/custardsource/parfait/parfait-pcp/0.2.5/parfait-pcp-0.2.5-sources.jar!/" />
+      <root url="jar://$MAVEN_REPOSITORY$/com/custardsource/parfait/parfait-io/0.2.5/parfait-io-0.2.5-sources.jar!/" />
+      <root url="jar://$MAVEN_REPOSITORY$/com/custardsource/parfait/dxm/0.2.5/dxm-0.2.5-sources.jar!/" />
+      <root url="jar://$MAVEN_REPOSITORY$/com/google/guava/guava/r06/guava-r06-sources.jar!/" />
+      <root url="jar://$MAVEN_REPOSITORY$/commons-io/commons-io/1.4/commons-io-1.4-sources.jar!/" />
+      <root url="jar://$MAVEN_REPOSITORY$/javax/measure/jsr-275/0.9.1/jsr-275-0.9.1-sources.jar!/" />
+    </SOURCES>
+  </library>
+</component>
