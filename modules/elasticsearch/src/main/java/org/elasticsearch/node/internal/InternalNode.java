@@ -62,6 +62,7 @@ import org.elasticsearch.jmx.JmxService;
 import org.elasticsearch.monitor.MonitorModule;
 import org.elasticsearch.monitor.MonitorService;
 import org.elasticsearch.monitor.jvm.JvmInfo;
+import org.elasticsearch.monitor.parfait.ParfaitModule;
 import org.elasticsearch.node.Node;
 import org.elasticsearch.plugins.PluginsModule;
 import org.elasticsearch.plugins.PluginsService;
@@ -142,6 +143,7 @@ public final class InternalNode implements Node {
         modules.add(new MonitorModule(settings));
         modules.add(new GatewayModule(settings));
         modules.add(new NodeClientModule());
+        modules.add(new ParfaitModule(settings));
 
         injector = modules.createInjector();
 

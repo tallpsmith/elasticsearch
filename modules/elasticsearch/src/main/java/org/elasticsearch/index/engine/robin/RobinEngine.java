@@ -19,6 +19,7 @@
 
 package org.elasticsearch.index.engine.robin;
 
+import com.custardsource.parfait.MonitoredLongValue;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.LogMergePolicy;
@@ -46,6 +47,7 @@ import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.index.similarity.SimilarityService;
 import org.elasticsearch.index.store.Store;
 import org.elasticsearch.index.translog.Translog;
+import org.elasticsearch.monitor.parfait.ParfaitService;
 
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -100,10 +102,12 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine, 
     private volatile boolean dirty = false;
 
     private volatile int disableFlushCounter = 0;
+    private final ParfaitService parfaitService;
+    private final MonitoredLongValue bulkOperations;
 
     @Inject public RobinEngine(ShardId shardId, @IndexSettings Settings indexSettings, Store store, SnapshotDeletionPolicy deletionPolicy, Translog translog,
                                MergePolicyProvider mergePolicyProvider, MergeSchedulerProvider mergeScheduler,
-                               AnalysisService analysisService, SimilarityService similarityService) throws EngineException {
+                               AnalysisService analysisService, SimilarityService similarityService, ParfaitService parfaitService) throws EngineException {
         super(shardId, indexSettings);
         Preconditions.checkNotNull(store, "Store must be provided to the engine");
         Preconditions.checkNotNull(deletionPolicy, "Snapshot deletion policy must be provided to the engine");
@@ -121,6 +125,9 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine, 
         this.mergeScheduler = mergeScheduler;
         this.analysisService = analysisService;
         this.similarityService = similarityService;
+        this.parfaitService = parfaitService;
+
+        bulkOperations = parfaitService.createMoniteredLongValue("elasticsearch.index.bulk", "# Bulk Operations performed by the engine",0L);
     }
 
     @Override public void updateIndexingBufferSize(ByteSizeValue indexingBufferSize) {
@@ -240,6 +247,7 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine, 
             dirty = true;
         } finally {
             rwl.readLock().unlock();
+            bulkOperations.inc();
         }
         return failures;
     }
