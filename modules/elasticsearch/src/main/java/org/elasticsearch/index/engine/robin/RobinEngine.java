@@ -19,7 +19,7 @@
 
 package org.elasticsearch.index.engine.robin;
 
-import com.custardsource.parfait.MonitoredLongValue;
+import com.custardsource.parfait.MonitoredCounter;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.LogMergePolicy;
@@ -103,7 +103,7 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine, 
 
     private volatile int disableFlushCounter = 0;
     private final ParfaitService parfaitService;
-    private final MonitoredLongValue bulkOperations;
+    private final MonitoredCounter bulkOperations;
 
     @Inject public RobinEngine(ShardId shardId, @IndexSettings Settings indexSettings, Store store, SnapshotDeletionPolicy deletionPolicy, Translog translog,
                                MergePolicyProvider mergePolicyProvider, MergeSchedulerProvider mergeScheduler,
@@ -127,7 +127,8 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine, 
         this.similarityService = similarityService;
         this.parfaitService = parfaitService;
 
-        bulkOperations = parfaitService.createMoniteredLongValue("elasticsearch.index.bulk", "# Bulk Operations performed by the engine",0L);
+        this.bulkOperations = parfaitService.createMoniteredCounter("elasticsearch.index.bulk." + shardId.getIndex() +"." + shardId.getId(), "# Bulk Operations performed by the engine for a given shard";
+
     }
 
     @Override public void updateIndexingBufferSize(ByteSizeValue indexingBufferSize) {

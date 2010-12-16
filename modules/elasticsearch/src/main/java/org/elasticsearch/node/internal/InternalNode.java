@@ -63,6 +63,7 @@ import org.elasticsearch.monitor.MonitorModule;
 import org.elasticsearch.monitor.MonitorService;
 import org.elasticsearch.monitor.jvm.JvmInfo;
 import org.elasticsearch.monitor.parfait.ParfaitModule;
+import org.elasticsearch.monitor.parfait.ParfaitService;
 import org.elasticsearch.node.Node;
 import org.elasticsearch.plugins.PluginsModule;
 import org.elasticsearch.plugins.PluginsService;
@@ -181,6 +182,7 @@ public final class InternalNode implements Node {
         injector.getInstance(MonitorService.class).start();
         injector.getInstance(RestController.class).start();
         injector.getInstance(TransportService.class).start();
+        injector.getInstance(ParfaitService.class).start();
         DiscoveryService discoService = injector.getInstance(DiscoveryService.class).start();
 
         // gateway should start after disco, so it can try and recovery from gateway on "start"

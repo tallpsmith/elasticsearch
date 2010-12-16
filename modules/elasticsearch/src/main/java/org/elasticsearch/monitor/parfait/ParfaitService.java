@@ -1,14 +1,12 @@
 package org.elasticsearch.monitor.parfait;
 
-import com.custardsource.parfait.Counter;
-import com.custardsource.parfait.MonitorableRegistry;
-import com.custardsource.parfait.MonitoredLongValue;
-import com.custardsource.parfait.dxm.FileParsingIdentifierSourceSet;
+import com.custardsource.parfait.*;
 import com.custardsource.parfait.dxm.IdentifierSourceSet;
 import com.custardsource.parfait.dxm.PcpMmvWriter;
 import com.custardsource.parfait.io.ByteCountingInputStream;
 import com.custardsource.parfait.io.ByteCountingOutputStream;
 import com.custardsource.parfait.pcp.PcpMonitorBridge;
+import com.custardsource.parfait.spring.SelfStartingMonitoringView;
 import org.elasticsearch.common.component.AbstractLifecycleComponent;
 import org.elasticsearch.common.settings.Settings;
 
@@ -20,7 +18,7 @@ import java.io.StringReader;
 
 public class ParfaitService extends AbstractLifecycleComponent<Void> {
     private final MonitorableRegistry monitorableRegistry;
-    private final PcpMonitorBridge pcpMonitorBridge;
+    private final SelfStartingMonitoringView selfStartingMonitoringView;
 
     public ParfaitService(Settings settings) {
         super(settings);
@@ -30,14 +28,26 @@ public class ParfaitService extends AbstractLifecycleComponent<Void> {
         Reader instanceData = new StringReader(""); // TODO empty for now, but could have different instance dimensions for different types of operations
         Reader metricData = new StringReader("elasticsearch.index.bulk  1"); // TODO, put this into a resource file
 
-        IdentifierSourceSet fallbacks = IdentifierSourceSet.EXPLICIT_SET;
-        IdentifierSourceSet identifierSourceSet = new FileParsingIdentifierSourceSet(instanceData, metricData, fallbacks);
-        pcpMonitorBridge = new PcpMonitorBridge(new PcpMmvWriter("elasticSearch", identifierSourceSet), monitorableRegistry);
+        IdentifierSourceSet fallbacks = IdentifierSourceSet.DEFAULT_SET;
+        IdentifierSourceSet identifierSourceSet = IdentifierSourceSet.DEFAULT_SET;//new FileParsingIdentifierSourceSet(instanceData, metricData, fallbacks);
+        final PcpMmvWriter mmvWriter = new PcpMmvWriter("elasticsearch.mmv", identifierSourceSet);
+        final PcpMonitorBridge pcpMonitorBridge = new PcpMonitorBridge(mmvWriter);
+        selfStartingMonitoringView = new SelfStartingMonitoringView(pcpMonitorBridge, 2000);
     }
 
 
-    public MonitoredLongValue createMoniteredLongValue(String name, String description, Long initialValue) {
-        return new MonitoredLongValue(name, description, initialValue);
+    public Monitorable<?> createMoniteredLongValue(String name, String description, Long initialValue) {
+        return register(new MonitoredLongValue(name, description, initialValue));
+    }
+
+    public MonitoredCounter createMoniteredCounter(String name, String description) {
+        return register(new MonitoredCounter(name, description));
+    }
+
+
+    private <T extends Monitorable> T register(T monitorable) {
+        monitorableRegistry.register(monitorable);
+        return monitorable;
     }
 
     public ByteCountingOutputStream wrapAsCountingOutputStream(OutputStream out, Counter existingCounter) {
@@ -49,12 +59,11 @@ public class ParfaitService extends AbstractLifecycleComponent<Void> {
     }
 
     @Override protected void doStart() {
-        monitorableRegistry.freeze();
-        pcpMonitorBridge.start();
+        selfStartingMonitoringView.start();
     }
 
     @Override protected void doStop() {
-        pcpMonitorBridge.stop();
+        selfStartingMonitoringView.stop();
     }
 
     @Override protected void doClose() {
