@@ -44,6 +44,7 @@ import org.elasticsearch.index.similarity.SimilarityService;
 import org.elasticsearch.index.store.Store;
 import org.elasticsearch.index.store.memory.ByteBufferStore;
 import org.elasticsearch.index.translog.fs.FsTranslog;
+import org.elasticsearch.monitor.parfait.ParfaitService;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.threadpool.scaling.ScalingThreadPool;
 
@@ -307,7 +308,7 @@ public class SimpleEngineBenchmark {
         ThreadPool threadPool = new ScalingThreadPool();
         SnapshotDeletionPolicy deletionPolicy = new SnapshotDeletionPolicy(new KeepOnlyLastDeletionPolicy(shardId, settings));
         Engine engine = new RobinEngine(shardId, settings, store, deletionPolicy, new FsTranslog(shardId, EMPTY_SETTINGS, new File("work/fs-translog"), false), new LogByteSizeMergePolicyProvider(store),
-                new ConcurrentMergeSchedulerProvider(shardId, settings), new AnalysisService(shardId.index()), new SimilarityService(shardId.index()));
+                new ConcurrentMergeSchedulerProvider(shardId, settings), new AnalysisService(shardId.index()), new SimilarityService(shardId.index()),new ParfaitService(settings));
         engine.start();
 
         SimpleEngineBenchmark benchmark = new SimpleEngineBenchmark(store, engine)

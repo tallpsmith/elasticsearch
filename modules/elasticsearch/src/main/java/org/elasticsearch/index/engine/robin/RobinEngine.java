@@ -127,7 +127,7 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine, 
         this.similarityService = similarityService;
         this.parfaitService = parfaitService;
 
-        this.bulkOperations = parfaitService.createMoniteredCounter("elasticsearch.index.bulk." + shardId.getIndex() +"." + shardId.getId(), "# Bulk Operations performed by the engine for a given shard";
+        this.bulkOperations = parfaitService.createMoniteredCounter("elasticsearch.index.bulk." + shardId.getIndex() +"." + shardId.getId(), "# Bulk Operations performed by the engine for a given shard");
 
     }
 
