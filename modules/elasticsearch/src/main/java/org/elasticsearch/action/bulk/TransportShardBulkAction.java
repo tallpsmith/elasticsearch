@@ -74,7 +74,8 @@ public class TransportShardBulkAction extends TransportShardReplicationOperation
     }
 
     @Override protected TransportRequestOptions transportOptions() {
-        return TransportRequestOptions.options().withCompress(true);
+        // low type since we don't want the large bulk requests to cause high latency on typical requests
+        return TransportRequestOptions.options().withCompress(true).withLowType();
     }
 
     @Override protected BulkShardRequest newRequestInstance() {
@@ -116,13 +117,17 @@ public class TransportShardBulkAction extends TransportShardReplicationOperation
                         }
                     }
 
-                    SourceToParse sourceToParse = SourceToParse.source(indexRequest.source()).type(indexRequest.type()).id(indexRequest.id()).routing(indexRequest.routing());
+                    SourceToParse sourceToParse = SourceToParse.source(indexRequest.source()).type(indexRequest.type()).id(indexRequest.id())
+                            .routing(indexRequest.routing()).parent(indexRequest.parent());
                     if (indexRequest.opType() == IndexRequest.OpType.INDEX) {
                         ops[i] = indexShard.prepareIndex(sourceToParse);
                     } else {
                         ops[i] = indexShard.prepareCreate(sourceToParse);
                     }
                 } catch (Exception e) {
+                    if (logger.isDebugEnabled()) {
+                        logger.debug("[" + shardRequest.request.index() + "][" + shardRequest.shardId + "]" + ": Failed to execute bulk item (index) [" + indexRequest + "]", e);
+                    }
                     responses[i] = new BulkItemResponse(item.id(), indexRequest.opType().toString().toLowerCase(),
                             new BulkItemResponse.Failure(indexRequest.index(), indexRequest.type(), indexRequest.id(), ExceptionsHelper.detailedMessage(e)));
                 }
@@ -131,6 +136,9 @@ public class TransportShardBulkAction extends TransportShardReplicationOperation
                 try {
                     ops[i] = indexShard.prepareDelete(deleteRequest.type(), deleteRequest.id());
                 } catch (Exception e) {
+                    if (logger.isDebugEnabled()) {
+                        logger.debug("[" + shardRequest.request.index() + "][" + shardRequest.shardId + "]" + ": Failed to execute bulk item (delete) [" + deleteRequest + "]", e);
+                    }
                     responses[i] = new BulkItemResponse(item.id(), "delete",
                             new BulkItemResponse.Failure(deleteRequest.index(), deleteRequest.type(), deleteRequest.id(), ExceptionsHelper.detailedMessage(e)));
                 }
@@ -198,7 +206,8 @@ public class TransportShardBulkAction extends TransportShardReplicationOperation
             if (item.request() instanceof IndexRequest) {
                 IndexRequest indexRequest = (IndexRequest) item.request();
                 try {
-                    SourceToParse sourceToParse = SourceToParse.source(indexRequest.source()).type(indexRequest.type()).id(indexRequest.id()).routing(indexRequest.routing());
+                    SourceToParse sourceToParse = SourceToParse.source(indexRequest.source()).type(indexRequest.type()).id(indexRequest.id())
+                            .routing(indexRequest.routing()).parent(indexRequest.parent());
                     if (indexRequest.opType() == IndexRequest.OpType.INDEX) {
                         ops[i] = indexShard.prepareIndex(sourceToParse);
                     } else {

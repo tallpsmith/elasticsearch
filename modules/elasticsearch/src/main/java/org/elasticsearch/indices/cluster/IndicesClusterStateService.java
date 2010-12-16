@@ -48,6 +48,7 @@ import org.elasticsearch.index.mapper.MapperService;
 import org.elasticsearch.index.service.IndexService;
 import org.elasticsearch.index.shard.IndexShardState;
 import org.elasticsearch.index.shard.recovery.RecoveryFailedException;
+import org.elasticsearch.index.shard.recovery.RecoverySource;
 import org.elasticsearch.index.shard.recovery.RecoveryTarget;
 import org.elasticsearch.index.shard.recovery.StartRecoveryRequest;
 import org.elasticsearch.index.shard.service.IndexShard;
@@ -72,6 +73,8 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent<Indic
 
     private final ThreadPool threadPool;
 
+    private final RecoverySource recoverySource;
+
     private final RecoveryTarget recoveryTarget;
 
     private final ShardStateAction shardStateAction;
@@ -88,13 +91,15 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent<Indic
     private final Object mutex = new Object();
 
     @Inject public IndicesClusterStateService(Settings settings, IndicesService indicesService, ClusterService clusterService,
-                                              ThreadPool threadPool, RecoveryTarget recoveryTarget, ShardStateAction shardStateAction,
+                                              ThreadPool threadPool, RecoveryTarget recoveryTarget, RecoverySource recoverySource,
+                                              ShardStateAction shardStateAction,
                                               NodeIndexCreatedAction nodeIndexCreatedAction, NodeIndexDeletedAction nodeIndexDeletedAction,
                                               NodeMappingCreatedAction nodeMappingCreatedAction) {
         super(settings);
         this.indicesService = indicesService;
         this.clusterService = clusterService;
         this.threadPool = threadPool;
+        this.recoverySource = recoverySource;
         this.recoveryTarget = recoveryTarget;
         this.shardStateAction = shardStateAction;
         this.nodeIndexCreatedAction = nodeIndexCreatedAction;
@@ -111,6 +116,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent<Indic
     }
 
     @Override protected void doClose() throws ElasticSearchException {
+        recoverySource.close();
     }
 
     @Override public void clusterChanged(final ClusterChangedEvent event) {
@@ -134,7 +140,11 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent<Indic
                     logger.debug("[{}] cleaning index (no shards allocated)", index);
                 }
                 // clean the index
-                indicesService.cleanIndex(index);
+                try {
+                    indicesService.cleanIndex(index);
+                } catch (Exception e) {
+                    logger.warn("failed to clean index (no shards of that index are allocated on this node)", e);
+                }
             }
         }
     }
@@ -145,12 +155,16 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent<Indic
                 if (logger.isDebugEnabled()) {
                     logger.debug("[{}] deleting index", index);
                 }
-                indicesService.deleteIndex(index);
-                threadPool.execute(new Runnable() {
-                    @Override public void run() {
-                        nodeIndexDeletedAction.nodeIndexDeleted(index, event.state().nodes().localNodeId());
-                    }
-                });
+                try {
+                    indicesService.deleteIndex(index);
+                    threadPool.execute(new Runnable() {
+                        @Override public void run() {
+                            nodeIndexDeletedAction.nodeIndexDeleted(index, event.state().nodes().localNodeId());
+                        }
+                    });
+                } catch (Exception e) {
+                    logger.warn("failed to delete index", e);
+                }
             }
         }
     }
@@ -161,7 +175,8 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent<Indic
             return;
         }
         for (final String index : indicesService.indices()) {
-            if (event.state().metaData().hasIndex(index)) {
+            IndexMetaData indexMetaData = event.state().metaData().index(index);
+            if (indexMetaData != null) {
                 // now, go over and delete shards that needs to get deleted
                 Set<Integer> newShardIds = newHashSet();
                 for (final ShardRouting shardRouting : routingNodes) {
@@ -175,10 +190,17 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent<Indic
                 }
                 for (Integer existingShardId : indexService.shardIds()) {
                     if (!newShardIds.contains(existingShardId)) {
-                        if (logger.isDebugEnabled()) {
-                            logger.debug("[{}][{}] deleting shard", index, existingShardId);
+                        if (indexMetaData.state() == IndexMetaData.State.CLOSE) {
+                            if (logger.isDebugEnabled()) {
+                                logger.debug("[{}][{}] removing shard (index is closed)", index, existingShardId);
+                            }
+                            indexService.removeShard(existingShardId);
+                        } else {
+                            if (logger.isDebugEnabled()) {
+                                logger.debug("[{}][{}] cleaning shard locally (not allocated)", index, existingShardId);
+                            }
+                            indexService.cleanShard(existingShardId);
                         }
-                        indexService.cleanShard(existingShardId);
                     }
                 }
             }
