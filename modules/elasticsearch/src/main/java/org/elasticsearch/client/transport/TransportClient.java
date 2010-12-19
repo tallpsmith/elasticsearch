@@ -136,19 +136,9 @@ public class TransportClient extends AbstractClient {
         modules.add(new ClientTransportActionModule());
         modules.add(new ClientTransportModule());
 
-        // disabled, still having problems with jgroups acting just as client
-        if (settings.getAsBoolean("discovery.enabled", true) && false) {
-            modules.add(new TransportClientClusterModule(settings));
-        }
-
         injector = modules.createInjector();
 
         injector.getInstance(TransportService.class).start();
-        try {
-            injector.getInstance(TransportClientClusterService.class).start();
-        } catch (Exception e) {
-            // ignore
-        }
 
         nodesService = injector.getInstance(TransportClientNodesService.class);
         internalClient = injector.getInstance(InternalTransportClient.class);
@@ -197,11 +187,6 @@ public class TransportClient extends AbstractClient {
      * Closes the client.
      */
     @Override public void close() {
-        try {
-            injector.getInstance(TransportClientClusterService.class).close();
-        } catch (Exception e) {
-            // ignore
-        }
         injector.getInstance(TransportClientNodesService.class).close();
         injector.getInstance(TransportService.class).close();
         try {
