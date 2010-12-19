@@ -6,10 +6,7 @@ import com.custardsource.parfait.dxm.PcpMmvWriter;
 import com.custardsource.parfait.io.ByteCountingInputStream;
 import com.custardsource.parfait.io.ByteCountingOutputStream;
 import com.custardsource.parfait.jmx.JmxView;
-import com.custardsource.parfait.pcp.EmptyTextSource;
-import com.custardsource.parfait.pcp.MetricDescriptionTextSource;
-import com.custardsource.parfait.pcp.PcpMonitorBridge;
-import com.custardsource.parfait.pcp.RegexSequenceNameMapper;
+import com.custardsource.parfait.pcp.*;
 import com.custardsource.parfait.spring.SelfStartingMonitoringView;
 import com.google.common.collect.Lists;
 import org.elasticsearch.common.component.AbstractLifecycleComponent;
@@ -37,14 +34,21 @@ public class ParfaitService extends AbstractLifecycleComponent<Void> {
         Reader metricData = new StringReader("elasticsearch.index.bulk  1"); // TODO, put this into a resource file
 
         IdentifierSourceSet fallbacks = IdentifierSourceSet.DEFAULT_SET;
+        Boolean isData = settings.getAsBoolean("node.data", false);
+        Boolean isClient = settings.getAsBoolean("node.client", false);
+        boolean isServer = isData || !isClient;
+
+        String nodeType = isServer ? "server" : "client";
+        System.out.printf("isData=%s, isClient=%s, isServer=%s, nodeType=%s\n", isData, isClient, isServer, nodeType);
+
         IdentifierSourceSet identifierSourceSet = IdentifierSourceSet.DEFAULT_SET;//new FileParsingIdentifierSourceSet(instanceData, metricData, fallbacks);
-        final PcpMmvWriter mmvWriter = new PcpMmvWriter("elasticsearch.mmv", identifierSourceSet);
+        final PcpMmvWriter mmvWriter = new PcpMmvWriter("elasticsearch-" + nodeType + ".mmv", identifierSourceSet);
 
         // TODO obviously this is not configured nicely yet, but shows the pattern to re-register sub-trees as domains
-        RegexSequenceNameMapper.Replacement replacement = new RegexSequenceNameMapper.Replacement(Pattern.compile("elasticsearch.index.bulk.([^\\.]+).([^\\.+])"), "elasticsearch.index.bulk[$1/$2]");
-        RegexSequenceNameMapper regexSequenceNameMapper = new RegexSequenceNameMapper(Collections.singletonList(replacement));
+        // RegexSequenceNameMapper.Replacement replacement = new RegexSequenceNameMapper.Replacement(Pattern.compile("elasticsearch.index.bulk.([^\\.]+).([^\\.+])"), "elasticsearch.index.bulk[$1/$2]");
+        // sRegexSequenceNameMapper regexSequenceNameMapper = new RegexSequenceNameMapper(Collections.singletonList(replacement));
 
-        final PcpMonitorBridge pcpMonitorBridge = new PcpMonitorBridge(mmvWriter, regexSequenceNameMapper, new MetricDescriptionTextSource(), new EmptyTextSource());
+        final PcpMonitorBridge pcpMonitorBridge = new PcpMonitorBridge(mmvWriter, MetricNameMapper.PASSTHROUGH_MAPPER, new MetricDescriptionTextSource(), new EmptyTextSource());
 
         // TODO whoops, forgot that JmxView relies on the Spring @ManagedResource stuff to expose, so need to get passed in the JmxService
         final JmxView jmxView = new JmxView();
@@ -63,6 +67,8 @@ public class ParfaitService extends AbstractLifecycleComponent<Void> {
 
 
     private <T extends Monitorable> T register(T monitorable) {
+        // TODO need to check if the monitorable exits and resue it, this is particularly noticeable if Indexes are deleted and recreated
+        // need to merge in Cowan's latest changes to see this though
         monitorableRegistry.register(monitorable);
         return monitorable;
     }

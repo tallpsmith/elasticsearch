@@ -104,6 +104,12 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine, 
     private volatile int disableFlushCounter = 0;
     private final ParfaitService parfaitService;
     private final MonitoredCounter bulkOperations;
+    private final MonitoredCounter flushOperations;
+    private final MonitoredCounter indexOperations;
+    private final MonitoredCounter createOperations;
+    private final MonitoredCounter deleteOperations;
+
+
 
     @Inject public RobinEngine(ShardId shardId, @IndexSettings Settings indexSettings, Store store, SnapshotDeletionPolicy deletionPolicy, Translog translog,
                                MergePolicyProvider mergePolicyProvider, MergeSchedulerProvider mergeScheduler,
@@ -127,7 +133,12 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine, 
         this.similarityService = similarityService;
         this.parfaitService = parfaitService;
 
-        this.bulkOperations = parfaitService.createMoniteredCounter("elasticsearch.index.bulk." + shardId.getIndex() +"." + shardId.getId(), "# Bulk Operations performed by the engine for a given shard");
+        System.out.println(shardId + " is starting");
+        this.bulkOperations = parfaitService.createMoniteredCounter(String.format("elasticsearch.index[%s/%s].bulk.count",shardId.getIndex(), shardId.id()), "# Bulk Operations performed by the engine for a given shard");
+        this.indexOperations = parfaitService.createMoniteredCounter(String.format("elasticsearch.index[%s/%s].index.count",shardId.getIndex(), shardId.id()), "# Index Operations performed by the engine for a given shard");
+        this.createOperations = parfaitService.createMoniteredCounter(String.format("elasticsearch.index[%s/%s].create.count",shardId.getIndex(), shardId.id()), "# Create Operations performed by the engine for a given shard");
+        this.deleteOperations = parfaitService.createMoniteredCounter(String.format("elasticsearch.index[%s/%s].delete.count",shardId.getIndex(), shardId.id()), "# Delete Operations performed by the engine for a given shard");
+        this.flushOperations = parfaitService.createMoniteredCounter(String.format("elasticsearch.index[%s/%s].flush.count",shardId.getIndex(), shardId.id()), "# Flush Operations performed by the engine for a given shard");
 
     }
 
@@ -270,6 +281,7 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine, 
             throw new CreateFailedEngineException(shardId, create, e);
         } finally {
             rwl.readLock().unlock();
+            createOperations.inc();
         }
     }
 
@@ -290,6 +302,7 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine, 
             throw new IndexFailedEngineException(shardId, index, e);
         } finally {
             rwl.readLock().unlock();
+            indexOperations.inc();
         }
     }
 
@@ -310,6 +323,7 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine, 
             throw new DeleteFailedEngineException(shardId, delete, e);
         } finally {
             rwl.readLock().unlock();
+            deleteOperations.inc();
         }
     }
 
@@ -445,6 +459,7 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine, 
             }
         } finally {
             rwl.writeLock().unlock();
+            flushOperations.inc();
         }
         if (flush.refresh()) {
             refresh(new Refresh(false));
