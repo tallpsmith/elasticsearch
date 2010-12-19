@@ -42,6 +42,13 @@ dependencies {
     compile 'org.apache.lucene:lucene-queries:3.0.3'
     compile 'org.apache.lucene:lucene-fast-vector-highlighter:3.0.3'
 
+    compile 'com.custardsource.parfait:parfait-pcp:0.2.7-SNAPSHOT'
+    compile 'com.custardsource.parfait:dxm:0.2.7-SNAPSHOT'
+    compile 'com.custardsource.parfait:parfait-spring:0.2.7-SNAPSHOT'
+    compile 'com.custardsource.parfait:parfait-io:0.2.7-SNAPSHOT'
+    compile 'com.custardsource.parfait:parfait-jmx:0.2.7-SNAPSHOT'
+    compile 'com.custardsource.parfait:parfait-core:0.2.7-SNAPSHOT'
+
     testCompile project(':test-testng')
     testCompile('org.testng:testng:5.10:jdk15') { transitive = false }
     testCompile('org.hamcrest:hamcrest-all:1.1') { transitive = false }
