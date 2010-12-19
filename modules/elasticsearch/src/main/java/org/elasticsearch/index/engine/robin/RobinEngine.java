@@ -137,11 +137,12 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine, 
         this.parfaitService = parfaitService;
 
         System.out.println(shardId + " is starting");
-        this.bulkOperations = parfaitService.createMoniteredCounter(String.format("elasticsearch.index[%s/%s].bulk.count",shardId.getIndex(), shardId.id()), "# Bulk Operations performed by the engine for a given shard");
-        this.indexOperations = parfaitService.createMoniteredCounter(String.format("elasticsearch.index[%s/%s].index.count",shardId.getIndex(), shardId.id()), "# Index Operations performed by the engine for a given shard");
-        this.createOperations = parfaitService.createMoniteredCounter(String.format("elasticsearch.index[%s/%s].create.count",shardId.getIndex(), shardId.id()), "# Create Operations performed by the engine for a given shard");
-        this.deleteOperations = parfaitService.createMoniteredCounter(String.format("elasticsearch.index[%s/%s].delete.count",shardId.getIndex(), shardId.id()), "# Delete Operations performed by the engine for a given shard");
-        this.flushOperations = parfaitService.createMoniteredCounter(String.format("elasticsearch.index[%s/%s].flush.count",shardId.getIndex(), shardId.id()), "# Flush Operations performed by the engine for a given shard");
+        ParfaitService.MonitoredCounterBuilder counterBuilder = parfaitService.forShard(shardId);
+        this.bulkOperations = counterBuilder.count("bulk");
+        this.indexOperations = counterBuilder.count("index");
+        this.createOperations = counterBuilder.count("create");
+        this.deleteOperations = counterBuilder.count("delete");
+        this.flushOperations = counterBuilder.count("flush");
 
     }
 

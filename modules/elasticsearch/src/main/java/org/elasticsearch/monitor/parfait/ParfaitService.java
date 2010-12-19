@@ -9,8 +9,10 @@ import com.custardsource.parfait.jmx.JmxView;
 import com.custardsource.parfait.pcp.*;
 import com.custardsource.parfait.spring.SelfStartingMonitoringView;
 import com.google.common.collect.Lists;
+import org.apache.commons.lang.StringUtils;
 import org.elasticsearch.common.component.AbstractLifecycleComponent;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.jmx.JmxService;
 
 import java.io.InputStream;
@@ -90,6 +92,24 @@ public class ParfaitService extends AbstractLifecycleComponent<Void> {
     }
 
     @Override protected void doClose() {
+    }
+
+    public MonitoredCounterBuilder forShard(ShardId shardId) {
+        return new MonitoredCounterBuilder(shardId);
+    }
+    public final class MonitoredCounterBuilder {
+
+
+        private final ShardId shardId;
+
+        public MonitoredCounterBuilder(ShardId shardId) {
+            this.shardId = shardId;
+        }
+
+
+        public MonitoredCounter count(String op) {
+            return createMoniteredCounter(String.format("elasticsearch.index[%s/%s].%s.count", shardId.getIndex(), shardId.id(), op), String.format("# %s Operations performed by the engine for a given shard", StringUtils.capitalize(op)));
+        }
     }
 
 }
