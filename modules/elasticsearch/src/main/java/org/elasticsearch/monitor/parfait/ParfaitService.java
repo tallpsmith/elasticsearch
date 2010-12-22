@@ -27,6 +27,9 @@ public class ParfaitService extends AbstractLifecycleComponent<Void> {
     private final MonitorableRegistry monitorableRegistry;
     private final SelfStartingMonitoringView selfStartingMonitoringView;
 
+
+    private static final int ELASTICSEARCH_PCP_CLUSTER_IDENTIFIER  = 0xB01; /*NG BO1NG - funny... ok you had to be there*/
+
     public ParfaitService(Settings settings) {
         super(settings);
         monitorableRegistry = new MonitorableRegistry();
@@ -45,6 +48,8 @@ public class ParfaitService extends AbstractLifecycleComponent<Void> {
 
         IdentifierSourceSet identifierSourceSet = IdentifierSourceSet.DEFAULT_SET;//new FileParsingIdentifierSourceSet(instanceData, metricData, fallbacks);
         final PcpMmvWriter mmvWriter = new PcpMmvWriter("elasticsearch-" + nodeType + ".mmv", identifierSourceSet);
+        mmvWriter.setClusterIdentifier(ELASTICSEARCH_PCP_CLUSTER_IDENTIFIER);
+
 
         // TODO obviously this is not configured nicely yet, but shows the pattern to re-register sub-trees as domains
         // RegexSequenceNameMapper.Replacement replacement = new RegexSequenceNameMapper.Replacement(Pattern.compile("elasticsearch.index.bulk.([^\\.]+).([^\\.+])"), "elasticsearch.index.bulk[$1/$2]");
