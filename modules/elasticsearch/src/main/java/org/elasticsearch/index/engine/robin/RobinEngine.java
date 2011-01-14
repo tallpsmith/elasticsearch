@@ -20,6 +20,7 @@
 package org.elasticsearch.index.engine.robin;
 
 import com.custardsource.parfait.MonitoredCounter;
+import com.custardsource.parfait.timing.EventTimer;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.LogMergePolicy;
@@ -111,6 +112,10 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine, 
     private final MonitoredCounter createOperations;
     private final MonitoredCounter deleteOperations;
 
+    private final EventTimer eventTimer;
+
+    public static final String EVENT_GROUP = "index";
+
 
 
     @Inject public RobinEngine(ShardId shardId, @IndexSettings Settings indexSettings, Store store, SnapshotDeletionPolicy deletionPolicy, Translog translog,
@@ -135,6 +140,8 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine, 
         this.analysisService = analysisService;
         this.similarityService = similarityService;
         this.parfaitService = parfaitService;
+
+        this.eventTimer = parfaitService.getEventTimer();
 
         System.out.println(shardId + " is starting");
         ParfaitService.MonitoredCounterBuilder counterBuilder = parfaitService.forShard(shardId);
@@ -206,6 +213,7 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine, 
     }
 
     @Override public EngineException[] bulk(Bulk bulk) throws EngineException {
+        eventTimer.getCollector().startTiming(EVENT_GROUP,"bulk");
         EngineException[] failures = null;
         rwl.readLock().lock();
         try {
@@ -264,6 +272,7 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine, 
         } finally {
             rwl.readLock().unlock();
             bulkOperations.inc();
+            eventTimer.getCollector().stopTiming();
         }
         return failures;
     }
@@ -290,6 +299,7 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine, 
     }
 
     @Override public void index(Index index) throws EngineException {
+        eventTimer.getCollector().startTiming(EVENT_GROUP,"index");
         rwl.readLock().lock();
         try {
             IndexWriter writer = this.indexWriter;
@@ -307,10 +317,13 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine, 
         } finally {
             rwl.readLock().unlock();
             indexOperations.inc();
+            eventTimer.getCollector().stopTiming();
         }
     }
 
     @Override public void delete(Delete delete) throws EngineException {
+        eventTimer.getCollector().startTiming(EVENT_GROUP,"delete");
+
         rwl.readLock().lock();
         try {
             IndexWriter writer = this.indexWriter;
@@ -328,6 +341,8 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine, 
         } finally {
             rwl.readLock().unlock();
             deleteOperations.inc();
+            eventTimer.getCollector().stopTiming();
+
         }
     }
 
@@ -419,6 +434,8 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine, 
     }
 
     @Override public void flush(Flush flush) throws EngineException {
+        eventTimer.getCollector().startTiming(EVENT_GROUP,"flush:"+ shardId.toString());
+
         if (indexWriter == null) {
             throw new EngineClosedException(shardId);
         }
@@ -464,6 +481,7 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine, 
         } finally {
             rwl.writeLock().unlock();
             flushOperations.inc();
+            eventTimer.getCollector().stopTiming();
         }
         if (flush.refresh()) {
             refresh(new Refresh(false));

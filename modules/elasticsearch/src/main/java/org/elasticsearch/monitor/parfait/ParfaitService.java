@@ -8,10 +8,19 @@ import com.custardsource.parfait.io.ByteCountingOutputStream;
 import com.custardsource.parfait.jmx.JmxView;
 import com.custardsource.parfait.pcp.*;
 import com.custardsource.parfait.spring.SelfStartingMonitoringView;
+import com.custardsource.parfait.timing.EventTimer;
+import com.custardsource.parfait.timing.LoggerSink;
+import com.custardsource.parfait.timing.StepMeasurementSink;
+import com.custardsource.parfait.timing.ThreadMetricSuite;
 import com.google.common.collect.Lists;
 import org.apache.commons.lang.StringUtils;
+import org.elasticsearch.action.admin.cluster.health.ClusterHealthStatus;
+import org.elasticsearch.cluster.ClusterChangedEvent;
+import org.elasticsearch.cluster.ClusterService;
+import org.elasticsearch.cluster.ClusterStateListener;
 import org.elasticsearch.common.component.AbstractLifecycleComponent;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.index.engine.robin.RobinEngine;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.jmx.JmxService;
 
@@ -20,6 +29,7 @@ import java.io.OutputStream;
 import java.io.Reader;
 import java.io.StringReader;
 import java.util.Collections;
+import java.util.List;
 import java.util.regex.Pattern;
 
 
@@ -28,9 +38,12 @@ public class ParfaitService extends AbstractLifecycleComponent<Void> {
     private final SelfStartingMonitoringView selfStartingMonitoringView;
 
 
-    private static final int ELASTICSEARCH_PCP_CLUSTER_IDENTIFIER  = 0xB01; /*NG BO1NG - funny... ok you had to be there*/
+    private static final int ELASTICSEARCH_PCP_CLUSTER_IDENTIFIER = 0xB01; /*NG BO1NG - funny... ok you had to be there*/
+    private final EventTimer eventTimer;
+    private final ClusterService clusterService;
 
-    public ParfaitService(Settings settings) {
+
+    public ParfaitService(ClusterService clusterService, Settings settings) {
         super(settings);
         monitorableRegistry = new MonitorableRegistry();
         // TODO metricsources etc
@@ -61,6 +74,32 @@ public class ParfaitService extends AbstractLifecycleComponent<Void> {
         final JmxView jmxView = new JmxView();
         final CompositeMonitoringView compositeMonitoringView = new CompositeMonitoringView(pcpMonitorBridge, jmxView);
         selfStartingMonitoringView = new SelfStartingMonitoringView(compositeMonitoringView, 2000);
+
+        List<StepMeasurementSink> sinks = Collections.<StepMeasurementSink>singletonList(new LoggerSink(getClass().getSimpleName()));
+        eventTimer = new EventTimer("elasticsearch.index", monitorableRegistry, ThreadMetricSuite.withDefaultMetrics(), true, false, sinks);
+        eventTimer.registerMetric(RobinEngine.EVENT_GROUP);
+
+        this.clusterService = clusterService;
+
+        /** STILL HAVE THIS PROBLEM:
+         *
+         * Caused by: java.lang.UnsupportedOperationException: There is already an instance of the Monitorable [elasticsearch.index.index.count] registered.
+         at com.custardsource.parfait.MonitorableRegistry.register(MonitorableRegistry.java:52)
+         at com.custardsource.parfait.AbstractMonitorable.registerSelf(AbstractMonitorable.java:36)
+         at com.custardsource.parfait.MonitoredCounter.<init>(MonitoredCounter.java:53)
+         at com.custardsource.parfait.timing.EventTimer.createMetric(EventTimer.java:105)
+         at com.custardsource.parfait.timing.EventTimer.createEventMetricCounters(EventTimer.java:110)
+         at com.custardsource.parfait.timing.EventTimer.getCounterSet(EventTimer.java:88)
+         at com.custardsource.parfait.timing.EventTimer.registerMetric(EventTimer.java:84)
+         at org.elasticsearch.index.engine.robin.RobinEngine.<init>(RobinEngine.java:145)
+         */
+    }
+
+    private class ParfaitExportedClusterEvents implements ClusterStateListener{
+
+        @Override public void clusterChanged(ClusterChangedEvent event) {
+            clusterService.state().getNodes().getDataNodes()
+        }
     }
 
 
@@ -76,8 +115,7 @@ public class ParfaitService extends AbstractLifecycleComponent<Void> {
     private <T extends Monitorable> T register(T monitorable) {
         // TODO need to check if the monitorable exits and resue it, this is particularly noticeable if Indexes are deleted and recreated
         // need to merge in Cowan's latest changes to see this though
-        monitorableRegistry.register(monitorable);
-        return monitorable;
+        return (T) monitorableRegistry.registerOrReuse(monitorable);
     }
 
     public ByteCountingOutputStream wrapAsCountingOutputStream(OutputStream out, Counter existingCounter) {
@@ -102,6 +140,7 @@ public class ParfaitService extends AbstractLifecycleComponent<Void> {
     public MonitoredCounterBuilder forShard(ShardId shardId) {
         return new MonitoredCounterBuilder(shardId);
     }
+
     public final class MonitoredCounterBuilder {
 
 
@@ -116,5 +155,10 @@ public class ParfaitService extends AbstractLifecycleComponent<Void> {
             return createMoniteredCounter(String.format("elasticsearch.index[%s/%s].%s.count", shardId.getIndex(), shardId.id(), op), String.format("# %s Operations performed by the engine for a given shard", StringUtils.capitalize(op)));
         }
     }
+
+    public EventTimer getEventTimer() {
+        return eventTimer;
+    }
+
 
 }
