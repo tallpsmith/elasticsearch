@@ -40,10 +40,9 @@ public class ParfaitService extends AbstractLifecycleComponent<Void> {
 
     private static final int ELASTICSEARCH_PCP_CLUSTER_IDENTIFIER = 0xB01; /*NG BO1NG - funny... ok you had to be there*/
     private final EventTimer eventTimer;
-    private final ClusterService clusterService;
 
 
-    public ParfaitService(ClusterService clusterService, Settings settings) {
+    public ParfaitService(Settings settings) {
         super(settings);
         monitorableRegistry = new MonitorableRegistry();
         // TODO metricsources etc
@@ -79,7 +78,6 @@ public class ParfaitService extends AbstractLifecycleComponent<Void> {
         eventTimer = new EventTimer("elasticsearch.index", monitorableRegistry, ThreadMetricSuite.withDefaultMetrics(), true, false, sinks);
         eventTimer.registerMetric(RobinEngine.EVENT_GROUP);
 
-        this.clusterService = clusterService;
 
         /** STILL HAVE THIS PROBLEM:
          *
@@ -93,13 +91,6 @@ public class ParfaitService extends AbstractLifecycleComponent<Void> {
          at com.custardsource.parfait.timing.EventTimer.registerMetric(EventTimer.java:84)
          at org.elasticsearch.index.engine.robin.RobinEngine.<init>(RobinEngine.java:145)
          */
-    }
-
-    private class ParfaitExportedClusterEvents implements ClusterStateListener{
-
-        @Override public void clusterChanged(ClusterChangedEvent event) {
-            clusterService.state().getNodes().getDataNodes()
-        }
     }
 
 

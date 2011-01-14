@@ -12,6 +12,7 @@
       <root url="jar://$MAVEN_REPOSITORY$/org/springframework/spring-core/3.0.5.RELEASE/spring-core-3.0.5.RELEASE.jar!/" />
       <root url="jar://$MAVEN_REPOSITORY$/org/springframework/spring-context/3.0.5.RELEASE/spring-context-3.0.5.RELEASE.jar!/" />
       <root url="jar://$MAVEN_REPOSITORY$/com/custardsource/parfait/parfait-jmx/0.2.7-SNAPSHOT/parfait-jmx-0.2.7-SNAPSHOT.jar!/" />
+      <root url="jar://$MAVEN_REPOSITORY$/commons-lang/commons-lang/2.4/commons-lang-2.4.jar!/" />
     </CLASSES>
     <JAVADOC />
     <SOURCES>
