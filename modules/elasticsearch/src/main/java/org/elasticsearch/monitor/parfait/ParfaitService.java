@@ -76,7 +76,7 @@ public class ParfaitService extends AbstractLifecycleComponent<Void> {
 
         List<StepMeasurementSink> sinks = Collections.<StepMeasurementSink>singletonList(new LoggerSink(getClass().getSimpleName()));
         eventTimer = new EventTimer("elasticsearch.index", monitorableRegistry, ThreadMetricSuite.withDefaultMetrics(), true, false, sinks);
-        eventTimer.registerMetric(RobinEngine.EVENT_GROUP);
+        eventTimer.registerMetric("elasticsearch.index");
 
 
         /** STILL HAVE THIS PROBLEM:

@@ -26,12 +26,9 @@ import org.elasticsearch.index.engine.Engine;
 import org.elasticsearch.index.settings.IndexSettingsService;
 import org.elasticsearch.index.similarity.SimilarityService;
 import org.elasticsearch.index.store.Store;
-<<<<<<< HEAD
 import org.elasticsearch.monitor.parfait.ParfaitService;
-=======
 import org.elasticsearch.index.translog.Translog;
 import org.elasticsearch.threadpool.ThreadPool;
->>>>>>> upstream/master
 
 import static org.elasticsearch.common.settings.ImmutableSettings.Builder.*;
 
@@ -42,7 +39,7 @@ public class SimpleRobinEngineTests extends AbstractSimpleEngineTests {
 
     protected Engine createEngine(Store store, Translog translog) {
         return new RobinEngine(shardId, EMPTY_SETTINGS, new ThreadPool(), new IndexSettingsService(shardId.index(), EMPTY_SETTINGS), store, createSnapshotDeletionPolicy(), translog, createMergePolicy(), createMergeScheduler(),
-                new AnalysisService(shardId.index()), new SimilarityService(shardId.index()), new NoneBloomCache(shardId.index(), new ParfaitService(EMPTY_SETTINGS)));
+                new AnalysisService(shardId.index()), new SimilarityService(shardId.index()), new NoneBloomCache(shardId.index()), new ParfaitService(EMPTY_SETTINGS));
     }
 
 }
