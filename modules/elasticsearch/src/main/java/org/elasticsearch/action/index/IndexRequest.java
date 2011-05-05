@@ -31,6 +31,7 @@ import org.elasticsearch.action.support.replication.ReplicationType;
 import org.elasticsearch.action.support.replication.ShardReplicationOperationRequest;
 import org.elasticsearch.client.Requests;
 import org.elasticsearch.cluster.metadata.MappingMetaData;
+import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Required;
 import org.elasticsearch.common.Unicode;
 import org.elasticsearch.common.io.stream.StreamInput;
@@ -40,8 +41,8 @@ import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.common.xcontent.XContentType;
+import org.elasticsearch.index.VersionType;
 
-import javax.annotation.Nullable;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.Map;
@@ -124,6 +125,9 @@ public class IndexRequest extends ShardReplicationOperationRequest {
     private OpType opType = OpType.INDEX;
 
     private boolean refresh = false;
+    private long version = 0;
+    private VersionType versionType = VersionType.INTERNAL;
+    private String percolate;
 
     private XContentType contentType = Requests.INDEX_CONTENT_TYPE;
 
@@ -519,6 +523,45 @@ public class IndexRequest extends ShardReplicationOperationRequest {
         return this.refresh;
     }
 
+    /**
+     * Sets the version, which will cause the index operation to only be performed if a matching
+     * version exists and no changes happened on the doc since then.
+     */
+    public IndexRequest version(long version) {
+        this.version = version;
+        return this;
+    }
+
+    public long version() {
+        return this.version;
+    }
+
+    /**
+     * Sets the versioning type. Defaults to {@link VersionType#INTERNAL}.
+     */
+    public IndexRequest versionType(VersionType versionType) {
+        this.versionType = versionType;
+        return this;
+    }
+
+    public VersionType versionType() {
+        return this.versionType;
+    }
+
+    /**
+     * Causes the index request document to be percolated. The parameter is the percolate query
+     * to use to reduce the percolated queries that are going to run against this doc. Can be
+     * set to <tt>*</tt> to indicate that all percolate queries should be run.
+     */
+    public IndexRequest percolate(String percolate) {
+        this.percolate = percolate;
+        return this;
+    }
+
+    public String percolate() {
+        return this.percolate;
+    }
+
     public void processRouting(MappingMetaData mappingMd) throws ElasticSearchException {
         if (routing == null && mappingMd.routing().hasPath()) {
             XContentParser parser = null;
@@ -561,6 +604,11 @@ public class IndexRequest extends ShardReplicationOperationRequest {
 
         opType = OpType.fromId(in.readByte());
         refresh = in.readBoolean();
+        version = in.readLong();
+        if (in.readBoolean()) {
+            percolate = in.readUTF();
+        }
+        versionType = VersionType.fromValue(in.readByte());
     }
 
     @Override public void writeTo(StreamOutput out) throws IOException {
@@ -588,6 +636,14 @@ public class IndexRequest extends ShardReplicationOperationRequest {
         out.writeBytes(source, sourceOffset, sourceLength);
         out.writeByte(opType.id());
         out.writeBoolean(refresh);
+        out.writeLong(version);
+        if (percolate == null) {
+            out.writeBoolean(false);
+        } else {
+            out.writeBoolean(true);
+            out.writeUTF(percolate);
+        }
+        out.writeByte(versionType.getValue());
     }
 
     @Override public String toString() {

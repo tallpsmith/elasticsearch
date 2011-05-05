@@ -19,7 +19,6 @@
 
 package org.elasticsearch.index.query.xcontent.plugin;
 
-import org.elasticsearch.cache.query.parser.QueryParserCacheModule;
 import org.elasticsearch.common.inject.Injector;
 import org.elasticsearch.common.inject.ModulesBuilder;
 import org.elasticsearch.common.settings.ImmutableSettings;
@@ -36,6 +35,7 @@ import org.elasticsearch.index.query.xcontent.XContentIndexQueryParser;
 import org.elasticsearch.index.settings.IndexSettingsModule;
 import org.elasticsearch.index.similarity.SimilarityModule;
 import org.elasticsearch.script.ScriptModule;
+import org.elasticsearch.threadpool.ThreadPoolModule;
 import org.testng.annotations.Test;
 
 import static org.hamcrest.MatcherAssert.*;
@@ -63,9 +63,9 @@ public class IndexQueryParserPluginTests {
         Index index = new Index("test");
         Injector injector = new ModulesBuilder().add(
                 new SettingsModule(settings),
-                new ScriptModule(),
-                new QueryParserCacheModule(settings),
-                new IndexSettingsModule(settings),
+                new ThreadPoolModule(settings),
+                new ScriptModule(settings),
+                new IndexSettingsModule(index, settings),
                 new IndexCacheModule(settings),
                 new AnalysisModule(settings),
                 new IndexEngineModule(settings),

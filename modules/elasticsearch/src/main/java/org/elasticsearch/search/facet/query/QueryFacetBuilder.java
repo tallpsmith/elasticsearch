@@ -64,16 +64,17 @@ public class QueryFacetBuilder extends AbstractFacetBuilder {
         return this;
     }
 
-    @Override public void toXContent(XContentBuilder builder, Params params) throws IOException {
+    @Override public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         if (query == null) {
             throw new SearchSourceBuilderException("query must be set on query facet for facet [" + name + "]");
         }
         builder.startObject(name);
-        builder.field(QueryFacetCollectorParser.NAME);
+        builder.field(QueryFacet.TYPE);
         query.toXContent(builder, params);
 
         addFilterFacetAndGlobal(builder, params);
 
         builder.endObject();
+        return builder;
     }
 }

@@ -19,11 +19,9 @@
 
 package org.elasticsearch.cluster.metadata;
 
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
-import org.elasticsearch.cluster.ClusterService;
-import org.elasticsearch.cluster.ClusterState;
-import org.elasticsearch.cluster.ProcessedClusterStateUpdateTask;
+import org.elasticsearch.cluster.*;
 import org.elasticsearch.cluster.routing.RoutingTable;
+import org.elasticsearch.common.Booleans;
 import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.ImmutableSettings;
@@ -36,13 +34,65 @@ import static org.elasticsearch.cluster.routing.RoutingTable.*;
 /**
  * @author kimchy (shay.banon)
  */
-public class MetaDataUpdateSettingsService extends AbstractComponent {
+public class MetaDataUpdateSettingsService extends AbstractComponent implements ClusterStateListener {
 
     private final ClusterService clusterService;
 
     @Inject public MetaDataUpdateSettingsService(Settings settings, ClusterService clusterService) {
         super(settings);
         this.clusterService = clusterService;
+        this.clusterService.add(this);
+    }
+
+    @Override public void clusterChanged(ClusterChangedEvent event) {
+        // update an index with number of replicas based on data nodes if possible
+        if (!event.state().nodes().localNodeMaster()) {
+            return;
+        }
+        // TODO we only need to do that on first create of an index, or the number of nodes changed
+        for (final IndexMetaData indexMetaData : event.state().metaData()) {
+            String autoExpandReplicas = indexMetaData.settings().get(IndexMetaData.SETTING_AUTO_EXPAND_REPLICAS);
+            if (autoExpandReplicas != null && Booleans.parseBoolean(autoExpandReplicas, true)) { // Booleans only work for false values, just as we want it here
+                try {
+                    final int numberOfReplicas = event.state().nodes().dataNodes().size() - 1;
+
+                    int min;
+                    int max;
+                    try {
+                        min = Integer.parseInt(autoExpandReplicas.substring(0, autoExpandReplicas.indexOf('-')));
+                        String sMax = autoExpandReplicas.substring(autoExpandReplicas.indexOf('-') + 1);
+                        if (sMax.equals("all")) {
+                            max = event.state().nodes().dataNodes().size() - 1;
+                        } else {
+                            max = Integer.parseInt(sMax);
+                        }
+                    } catch (Exception e) {
+                        logger.warn("failed to set [{}], wrong format [{}]", e, IndexMetaData.SETTING_AUTO_EXPAND_REPLICAS, autoExpandReplicas);
+                        continue;
+                    }
+
+                    // same value, nothing to do there
+                    if (numberOfReplicas == indexMetaData.numberOfReplicas()) {
+                        continue;
+                    }
+
+                    if (numberOfReplicas >= min && numberOfReplicas <= max) {
+                        Settings settings = ImmutableSettings.settingsBuilder().put(IndexMetaData.SETTING_NUMBER_OF_REPLICAS, numberOfReplicas).build();
+                        updateSettings(settings, new String[]{indexMetaData.index()}, new Listener() {
+                            @Override public void onSuccess() {
+                                logger.info("[{}] auto expanded replicas to [{}]", indexMetaData.index(), numberOfReplicas);
+                            }
+
+                            @Override public void onFailure(Throwable t) {
+                                logger.warn("[{}] fail to auto expand replicas to [{}]", indexMetaData.index(), numberOfReplicas);
+                            }
+                        });
+                    }
+                } catch (Exception e) {
+                    logger.warn("[{}] failed to parse auto expand replicas", e, indexMetaData.index());
+                }
+            }
+        }
     }
 
     public void updateSettings(final Settings pSettings, final String[] indices, final Listener listener) {
@@ -58,7 +108,6 @@ public class MetaDataUpdateSettingsService extends AbstractComponent {
         clusterService.submitStateUpdateTask("update-settings", new ProcessedClusterStateUpdateTask() {
             @Override public ClusterState execute(ClusterState currentState) {
                 try {
-                    boolean changed = false;
                     String[] actualIndices = currentState.metaData().concreteIndices(indices);
                     RoutingTable.Builder routingTableBuilder = newRoutingTableBuilder().routingTable(currentState.routingTable());
                     MetaData.Builder metaDataBuilder = MetaData.newMetaDataBuilder().metaData(currentState.metaData());
@@ -67,15 +116,10 @@ public class MetaDataUpdateSettingsService extends AbstractComponent {
                     if (updatedNumberOfReplicas != -1) {
                         routingTableBuilder.updateNumberOfReplicas(updatedNumberOfReplicas, actualIndices);
                         metaDataBuilder.updateNumberOfReplicas(updatedNumberOfReplicas, actualIndices);
-                        changed = true;
+                        logger.info("Updating number_of_replicas to [{}] for indices {}", updatedNumberOfReplicas, actualIndices);
                     }
 
-                    if (!changed) {
-                        listener.onFailure(new ElasticSearchIllegalArgumentException("No settings applied"));
-                        return currentState;
-                    }
-
-                    logger.info("Updating number_of_replicas to [{}] for indices {}", updatedNumberOfReplicas, actualIndices);
+                    metaDataBuilder.updateSettings(settings, actualIndices);
 
                     return ClusterState.builder().state(currentState).metaData(metaDataBuilder).routingTable(routingTableBuilder).build();
                 } catch (Exception e) {

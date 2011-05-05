@@ -33,7 +33,7 @@ import org.elasticsearch.index.Index;
 import org.elasticsearch.index.query.QueryParsingException;
 import org.elasticsearch.index.settings.IndexSettings;
 import org.elasticsearch.script.ScriptService;
-import org.elasticsearch.script.search.SearchScript;
+import org.elasticsearch.script.SearchScript;
 import org.elasticsearch.search.internal.SearchContext;
 
 import java.io.IOException;
@@ -121,7 +121,7 @@ public class ScriptFilterParser extends AbstractIndexComponent implements XConte
                 throw new ElasticSearchIllegalStateException("No search context on going...");
             }
 
-            this.searchScript = new SearchScript(context.lookup(), scriptLang, script, params, scriptService);
+            this.searchScript = context.scriptService().search(context.lookup(), scriptLang, script, params);
         }
 
         @Override public String toString() {
@@ -164,6 +164,10 @@ public class ScriptFilterParser extends AbstractIndexComponent implements XConte
                 this.searchScript = searchScript;
             }
 
+            @Override public long sizeInBytes() {
+                return 0;
+            }
+
             @Override public boolean isCacheable() {
                 // not cacheable for several reasons:
                 // 1. The script service is shared and holds the current reader executing against, and it
@@ -173,7 +177,8 @@ public class ScriptFilterParser extends AbstractIndexComponent implements XConte
             }
 
             @Override public boolean get(int doc) throws IOException {
-                Object val = searchScript.execute(doc);
+                searchScript.setNextDocId(doc);
+                Object val = searchScript.run();
                 if (val == null) {
                     return false;
                 }

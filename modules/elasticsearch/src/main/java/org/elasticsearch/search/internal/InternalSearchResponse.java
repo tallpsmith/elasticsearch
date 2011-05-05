@@ -26,7 +26,7 @@ import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.search.SearchHits;
 import org.elasticsearch.search.facet.Facets;
-import org.elasticsearch.search.facet.internal.InternalFacets;
+import org.elasticsearch.search.facet.InternalFacets;
 
 import java.io.IOException;
 
@@ -41,12 +41,19 @@ public class InternalSearchResponse implements Streamable, ToXContent {
 
     private InternalFacets facets;
 
+    private boolean timedOut;
+
     private InternalSearchResponse() {
     }
 
-    public InternalSearchResponse(InternalSearchHits hits, InternalFacets facets) {
+    public InternalSearchResponse(InternalSearchHits hits, InternalFacets facets, boolean timedOut) {
         this.hits = hits;
         this.facets = facets;
+        this.timedOut = timedOut;
+    }
+
+    public boolean timedOut() {
+        return this.timedOut;
     }
 
     public SearchHits hits() {
@@ -57,11 +64,12 @@ public class InternalSearchResponse implements Streamable, ToXContent {
         return facets;
     }
 
-    @Override public void toXContent(XContentBuilder builder, Params params) throws IOException {
+    @Override public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         hits.toXContent(builder, params);
         if (facets != null) {
             facets.toXContent(builder, params);
         }
+        return builder;
     }
 
     public static InternalSearchResponse readInternalSearchResponse(StreamInput in) throws IOException {
@@ -75,6 +83,7 @@ public class InternalSearchResponse implements Streamable, ToXContent {
         if (in.readBoolean()) {
             facets = InternalFacets.readFacets(in);
         }
+        timedOut = in.readBoolean();
     }
 
     @Override public void writeTo(StreamOutput out) throws IOException {
@@ -85,5 +94,6 @@ public class InternalSearchResponse implements Streamable, ToXContent {
             out.writeBoolean(true);
             facets.writeTo(out);
         }
+        out.writeBoolean(timedOut);
     }
 }

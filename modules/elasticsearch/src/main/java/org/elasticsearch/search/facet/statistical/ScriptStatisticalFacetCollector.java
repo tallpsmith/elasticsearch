@@ -20,9 +20,10 @@
 package org.elasticsearch.search.facet.statistical;
 
 import org.apache.lucene.index.IndexReader;
-import org.elasticsearch.script.search.SearchScript;
+import org.apache.lucene.search.Scorer;
+import org.elasticsearch.script.SearchScript;
+import org.elasticsearch.search.facet.AbstractFacetCollector;
 import org.elasticsearch.search.facet.Facet;
-import org.elasticsearch.search.facet.support.AbstractFacetCollector;
 import org.elasticsearch.search.internal.SearchContext;
 
 import java.io.IOException;
@@ -35,9 +36,9 @@ public class ScriptStatisticalFacetCollector extends AbstractFacetCollector {
 
     private final SearchScript script;
 
-    private double min = Double.NaN;
+    private double min = Double.POSITIVE_INFINITY;
 
-    private double max = Double.NaN;
+    private double max = Double.NEGATIVE_INFINITY;
 
     private double total = 0;
 
@@ -47,15 +48,16 @@ public class ScriptStatisticalFacetCollector extends AbstractFacetCollector {
 
     public ScriptStatisticalFacetCollector(String facetName, String scriptLang, String script, Map<String, Object> params, SearchContext context) {
         super(facetName);
-        this.script = new SearchScript(context.lookup(), scriptLang, script, params, context.scriptService());
+        this.script = context.scriptService().search(context.lookup(), scriptLang, script, params);
     }
 
     @Override protected void doCollect(int doc) throws IOException {
-        double value = ((Number) script.execute(doc)).doubleValue();
-        if (value < min || Double.isNaN(min)) {
+        script.setNextDocId(doc);
+        double value = script.runAsDouble();
+        if (value < min) {
             min = value;
         }
-        if (value > max || Double.isNaN(max)) {
+        if (value > max) {
             max = value;
         }
         sumOfSquares += value * value;
@@ -63,11 +65,15 @@ public class ScriptStatisticalFacetCollector extends AbstractFacetCollector {
         count++;
     }
 
+    @Override public void setScorer(Scorer scorer) throws IOException {
+        script.setScorer(scorer);
+    }
+
     @Override protected void doSetNextReader(IndexReader reader, int docBase) throws IOException {
         script.setNextReader(reader);
     }
 
     @Override public Facet facet() {
-        return new InternalStatisticalFacet(facetName, "_na", min, max, total, sumOfSquares, count);
+        return new InternalStatisticalFacet(facetName, min, max, total, sumOfSquares, count);
     }
 }

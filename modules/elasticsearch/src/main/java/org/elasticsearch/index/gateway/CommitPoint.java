@@ -19,10 +19,10 @@
 
 package org.elasticsearch.index.gateway;
 
+import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.collect.ImmutableList;
 import org.elasticsearch.index.store.StoreFileMetaData;
 
-import javax.annotation.Nullable;
 import java.util.List;
 
 /**
@@ -30,7 +30,7 @@ import java.util.List;
  */
 public class CommitPoint {
 
-    public static CommitPoint NULL = new CommitPoint(-1, "_null_", Type.GENERATED, ImmutableList.<CommitPoint.FileInfo>of(), ImmutableList.<CommitPoint.FileInfo>of());
+    public static final CommitPoint NULL = new CommitPoint(-1, "_null_", Type.GENERATED, ImmutableList.<CommitPoint.FileInfo>of(), ImmutableList.<CommitPoint.FileInfo>of());
 
     public static class FileInfo {
         private final String name;
@@ -62,10 +62,10 @@ public class CommitPoint {
         }
 
         public boolean isSame(StoreFileMetaData md) {
-            if (checksum != null && md.checksum() != null) {
-                return checksum.equals(md.checksum());
+            if (checksum == null || md.checksum() == null) {
+                return false;
             }
-            return length == md.length();
+            return length == md.length() && checksum.equals(md.checksum());
         }
     }
 

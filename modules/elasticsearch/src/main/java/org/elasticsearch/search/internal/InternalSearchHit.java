@@ -21,9 +21,11 @@ package org.elasticsearch.search.internal;
 
 import org.apache.lucene.search.Explanation;
 import org.elasticsearch.ElasticSearchParseException;
+import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.Unicode;
 import org.elasticsearch.common.collect.ImmutableMap;
+import org.elasticsearch.common.compress.lzf.LZF;
 import org.elasticsearch.common.compress.lzf.LZFDecoder;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
@@ -37,7 +39,6 @@ import org.elasticsearch.search.SearchHitField;
 import org.elasticsearch.search.SearchShardTarget;
 import org.elasticsearch.search.highlight.HighlightField;
 
-import javax.annotation.Nullable;
 import java.io.IOException;
 import java.util.Iterator;
 import java.util.Map;
@@ -61,6 +62,8 @@ public class InternalSearchHit implements SearchHit {
     private String id;
 
     private String type;
+
+    private long version = -1;
 
     private byte[] source;
 
@@ -110,6 +113,18 @@ public class InternalSearchHit implements SearchHit {
         return score();
     }
 
+    public void version(long version) {
+        this.version = version;
+    }
+
+    @Override public long version() {
+        return this.version;
+    }
+
+    @Override public long getVersion() {
+        return this.version;
+    }
+
     @Override public String index() {
         return shard.index();
     }
@@ -138,7 +153,7 @@ public class InternalSearchHit implements SearchHit {
         if (source == null) {
             return null;
         }
-        if (LZFDecoder.isCompressed(source)) {
+        if (LZF.isCompressed(source)) {
             try {
                 this.source = LZFDecoder.decode(source);
             } catch (IOException e) {
@@ -279,6 +294,7 @@ public class InternalSearchHit implements SearchHit {
         static final XContentBuilderString _INDEX = new XContentBuilderString("_index");
         static final XContentBuilderString _TYPE = new XContentBuilderString("_type");
         static final XContentBuilderString _ID = new XContentBuilderString("_id");
+        static final XContentBuilderString _VERSION = new XContentBuilderString("_version");
         static final XContentBuilderString _SCORE = new XContentBuilderString("_score");
         static final XContentBuilderString FIELDS = new XContentBuilderString("fields");
         static final XContentBuilderString HIGHLIGHT = new XContentBuilderString("highlight");
@@ -290,13 +306,16 @@ public class InternalSearchHit implements SearchHit {
         static final XContentBuilderString DETAILS = new XContentBuilderString("details");
     }
 
-    @Override public void toXContent(XContentBuilder builder, Params params) throws IOException {
+    @Override public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject();
         builder.field(Fields._INDEX, shard.index());
 //        builder.field("_shard", shard.shardId());
 //        builder.field("_node", shard.nodeId());
-        builder.field(Fields._TYPE, type());
-        builder.field(Fields._ID, id());
+        builder.field(Fields._TYPE, type);
+        builder.field(Fields._ID, id);
+        if (version != -1) {
+            builder.field(Fields._VERSION, version);
+        }
         if (Float.isNaN(score)) {
             builder.nullField(Fields._SCORE);
         } else {
@@ -359,6 +378,7 @@ public class InternalSearchHit implements SearchHit {
             buildExplanation(builder, explanation());
         }
         builder.endObject();
+        return builder;
     }
 
     private void buildExplanation(XContentBuilder builder, Explanation explanation) throws IOException {
@@ -390,6 +410,7 @@ public class InternalSearchHit implements SearchHit {
         score = in.readFloat();
         id = in.readUTF();
         type = in.readUTF();
+        version = in.readLong();
         int size = in.readVInt();
         if (size > 0) {
             source = new byte[size];
@@ -484,6 +505,10 @@ public class InternalSearchHit implements SearchHit {
                     sortValues[i] = in.readDouble();
                 } else if (type == 6) {
                     sortValues[i] = in.readByte();
+                } else if (type == 7) {
+                    sortValues[i] = in.readShort();
+                } else if (type == 8) {
+                    sortValues[i] = in.readBoolean();
                 } else {
                     throw new IOException("Can't match type [" + type + "]");
                 }
@@ -518,6 +543,7 @@ public class InternalSearchHit implements SearchHit {
         out.writeFloat(score);
         out.writeUTF(id);
         out.writeUTF(type);
+        out.writeLong(version);
         if (source == null) {
             out.writeVInt(0);
         } else {
@@ -574,6 +600,12 @@ public class InternalSearchHit implements SearchHit {
                     } else if (type == Byte.class) {
                         out.writeByte((byte) 6);
                         out.writeByte((Byte) sortValue);
+                    } else if (type == Short.class) {
+                        out.writeByte((byte) 7);
+                        out.writeShort((Short) sortValue);
+                    } else if (type == Boolean.class) {
+                        out.writeByte((byte) 8);
+                        out.writeBoolean((Boolean) sortValue);
                     } else {
                         throw new IOException("Can't handle sort field value of type [" + type + "]");
                     }

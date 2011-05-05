@@ -20,7 +20,7 @@
 package org.elasticsearch.search.fetch.script;
 
 import org.elasticsearch.common.xcontent.XContentParser;
-import org.elasticsearch.script.search.SearchScript;
+import org.elasticsearch.script.SearchScript;
 import org.elasticsearch.search.SearchParseElement;
 import org.elasticsearch.search.internal.SearchContext;
 
@@ -53,6 +53,7 @@ public class ScriptFieldsParseElement implements SearchParseElement {
                 String script = null;
                 String scriptLang = null;
                 Map<String, Object> params = null;
+                boolean ignoreException = false;
                 while ((token = parser.nextToken()) != XContentParser.Token.END_OBJECT) {
                     if (token == XContentParser.Token.FIELD_NAME) {
                         currentFieldName = parser.currentName();
@@ -63,11 +64,13 @@ public class ScriptFieldsParseElement implements SearchParseElement {
                             script = parser.text();
                         } else if ("lang".equals(currentFieldName)) {
                             scriptLang = parser.text();
+                        } else if ("ignore_failure".equals(currentFieldName)) {
+                            ignoreException = parser.booleanValue();
                         }
                     }
                 }
-                SearchScript searchScript = new SearchScript(context.lookup(), scriptLang, script, params, context.scriptService());
-                context.scriptFields().add(new ScriptFieldsContext.ScriptField(fieldName, searchScript));
+                SearchScript searchScript = context.scriptService().search(context.lookup(), scriptLang, script, params);
+                context.scriptFields().add(new ScriptFieldsContext.ScriptField(fieldName, searchScript, ignoreException));
             }
         }
     }

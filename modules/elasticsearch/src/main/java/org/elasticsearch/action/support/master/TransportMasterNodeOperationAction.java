@@ -27,6 +27,7 @@ import org.elasticsearch.cluster.ClusterChangedEvent;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.TimeoutClusterStateListener;
+import org.elasticsearch.cluster.block.ClusterBlockException;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
@@ -46,18 +47,23 @@ public abstract class TransportMasterNodeOperationAction<Request extends MasterN
 
     protected final ClusterService clusterService;
 
-    protected final ThreadPool threadPool;
+    final String transportAction;
+    final String executor;
 
     protected TransportMasterNodeOperationAction(Settings settings, TransportService transportService, ClusterService clusterService, ThreadPool threadPool) {
-        super(settings);
+        super(settings, threadPool);
         this.transportService = transportService;
         this.clusterService = clusterService;
-        this.threadPool = threadPool;
 
-        transportService.registerHandler(transportAction(), new TransportHandler());
+        this.transportAction = transportAction();
+        this.executor = executor();
+
+        transportService.registerHandler(transportAction, new TransportHandler());
     }
 
     protected abstract String transportAction();
+
+    protected abstract String executor();
 
     protected abstract Request newRequest();
 
@@ -69,8 +75,8 @@ public abstract class TransportMasterNodeOperationAction<Request extends MasterN
         return false;
     }
 
-    protected void checkBlock(Request request, ClusterState state) {
-
+    protected ClusterBlockException checkBlock(Request request, ClusterState state) {
+        return null;
     }
 
     protected void processBeforeDelegationToMaster(Request request, ClusterState state) {
@@ -85,17 +91,52 @@ public abstract class TransportMasterNodeOperationAction<Request extends MasterN
         final ClusterState clusterState = clusterService.state();
         final DiscoveryNodes nodes = clusterState.nodes();
         if (nodes.localNodeMaster() || localExecute(request)) {
-            threadPool.execute(new Runnable() {
-                @Override public void run() {
-                    try {
-                        checkBlock(request, clusterState);
-                        Response response = masterOperation(request, clusterState);
-                        listener.onResponse(response);
-                    } catch (Exception e) {
-                        listener.onFailure(e);
-                    }
+            // check for block, if blocked, retry, else, execute locally
+            final ClusterBlockException blockException = checkBlock(request, clusterState);
+            if (blockException != null) {
+                if (!blockException.retryable()) {
+                    listener.onFailure(blockException);
+                    return;
                 }
-            });
+                clusterService.add(request.masterNodeTimeout(), new TimeoutClusterStateListener() {
+                    @Override public void postAdded() {
+                        ClusterBlockException blockException = checkBlock(request, clusterService.state());
+                        if (blockException == null || !blockException.retryable()) {
+                            clusterService.remove(this);
+                            innerExecute(request, listener, false);
+                        }
+                    }
+
+                    @Override public void onClose() {
+                        clusterService.remove(this);
+                        listener.onFailure(blockException);
+                    }
+
+                    @Override public void onTimeout(TimeValue timeout) {
+                        clusterService.remove(this);
+                        listener.onFailure(blockException);
+                    }
+
+                    @Override public void clusterChanged(ClusterChangedEvent event) {
+                        ClusterBlockException blockException = checkBlock(request, event.state());
+                        if (blockException == null || !blockException.retryable()) {
+                            clusterService.remove(this);
+                            innerExecute(request, listener, false);
+                        }
+                    }
+                });
+            } else {
+                threadPool.executor(executor).execute(new Runnable() {
+                    @Override public void run() {
+                        try {
+                            Response response = masterOperation(request, clusterState);
+                            listener.onResponse(response);
+                        } catch (Exception e) {
+                            listener.onFailure(e);
+                        }
+                    }
+                });
+            }
         } else {
             if (nodes.masterNode() == null) {
                 if (retrying) {
@@ -132,13 +173,17 @@ public abstract class TransportMasterNodeOperationAction<Request extends MasterN
                 return;
             }
             processBeforeDelegationToMaster(request, clusterState);
-            transportService.sendRequest(nodes.masterNode(), transportAction(), request, new BaseTransportResponseHandler<Response>() {
+            transportService.sendRequest(nodes.masterNode(), transportAction, request, new BaseTransportResponseHandler<Response>() {
                 @Override public Response newInstance() {
                     return newResponse();
                 }
 
                 @Override public void handleResponse(Response response) {
                     listener.onResponse(response);
+                }
+
+                @Override public String executor() {
+                    return ThreadPool.Names.SAME;
                 }
 
                 @Override public void handleException(final TransportException exp) {
@@ -185,35 +230,30 @@ public abstract class TransportMasterNodeOperationAction<Request extends MasterN
             return newRequest();
         }
 
+        @Override public String executor() {
+            return ThreadPool.Names.SAME;
+        }
+
         @Override public void messageReceived(final Request request, final TransportChannel channel) throws Exception {
-            final ClusterState clusterState = clusterService.state();
-            if (clusterState.nodes().localNodeMaster() || localExecute(request)) {
-                checkBlock(request, clusterState);
-                Response response = masterOperation(request, clusterState);
-                channel.sendResponse(response);
-            } else {
-                transportService.sendRequest(clusterService.state().nodes().masterNode(), transportAction(), request, new BaseTransportResponseHandler<Response>() {
-                    @Override public Response newInstance() {
-                        return newResponse();
+            // we just send back a response, no need to fork a listener
+            request.listenerThreaded(false);
+            execute(request, new ActionListener<Response>() {
+                @Override public void onResponse(Response response) {
+                    try {
+                        channel.sendResponse(response);
+                    } catch (Exception e) {
+                        onFailure(e);
                     }
+                }
 
-                    @Override public void handleResponse(Response response) {
-                        try {
-                            channel.sendResponse(response);
-                        } catch (Exception e) {
-                            logger.error("Failed to send response", e);
-                        }
+                @Override public void onFailure(Throwable e) {
+                    try {
+                        channel.sendResponse(e);
+                    } catch (Exception e1) {
+                        logger.warn("Failed to send response", e1);
                     }
-
-                    @Override public void handleException(TransportException exp) {
-                        try {
-                            channel.sendResponse(exp);
-                        } catch (Exception e) {
-                            logger.error("Failed to send response", e);
-                        }
-                    }
-                });
-            }
+                }
+            });
         }
     }
 }

@@ -22,12 +22,11 @@ package org.elasticsearch.test.integration.search.scriptfield;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.common.collect.MapBuilder;
-import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.search.sort.SortOrder;
 import org.elasticsearch.test.integration.AbstractNodesTests;
-import org.testng.annotations.AfterMethod;
-import org.testng.annotations.BeforeMethod;
+import org.testng.annotations.AfterClass;
+import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
 import java.util.Arrays;
@@ -35,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.elasticsearch.client.Requests.*;
+import static org.elasticsearch.common.settings.ImmutableSettings.*;
 import static org.elasticsearch.common.xcontent.XContentFactory.*;
 import static org.elasticsearch.index.query.xcontent.QueryBuilders.*;
 import static org.hamcrest.MatcherAssert.*;
@@ -48,13 +48,13 @@ public class ScriptFieldSearchTests extends AbstractNodesTests {
 
     private Client client;
 
-    @BeforeMethod public void createNodes() throws Exception {
-        startNode("server1");
-        startNode("client1", ImmutableSettings.settingsBuilder().put("node.client", true).build());
+    @BeforeClass public void createNodes() throws Exception {
+        startNode("server1", settingsBuilder().put("number_of_shards", 1).put("number_of_replicas", 0));
+        startNode("client1", settingsBuilder().put("node.client", true).build());
         client = getClient();
     }
 
-    @AfterMethod public void closeNodes() {
+    @AfterClass public void closeNodes() {
         client.close();
         closeNode("client1");
         closeAllNodes();
@@ -65,6 +65,11 @@ public class ScriptFieldSearchTests extends AbstractNodesTests {
     }
 
     @Test public void testDocAndFields() throws Exception {
+        try {
+            client.admin().indices().prepareDelete("test").execute().actionGet();
+        } catch (Exception e) {
+            // its ok
+        }
         client.admin().indices().prepareCreate("test").execute().actionGet();
 
         String mapping = XContentFactory.jsonBuilder().startObject().startObject("type").startObject("properties")
@@ -130,11 +135,17 @@ public class ScriptFieldSearchTests extends AbstractNodesTests {
     }
 
     @Test public void testScriptFieldUsingSource() throws Exception {
+        try {
+            client.admin().indices().prepareDelete("test").execute().actionGet();
+        } catch (Exception e) {
+            // its ok
+        }
         client.admin().indices().prepareCreate("test").execute().actionGet();
         client.prepareIndex("test", "type1", "1")
                 .setSource(jsonBuilder().startObject()
                         .startObject("obj1").field("test", "something").endObject()
                         .startObject("obj2").startArray("arr2").value("arr_value1").value("arr_value2").endArray().endObject()
+                        .startArray("arr3").startObject().field("arr3_field1", "arr3_value1").endObject().endArray()
                         .endObject())
                 .execute().actionGet();
         client.admin().indices().refresh(refreshRequest()).actionGet();
@@ -146,7 +157,10 @@ public class ScriptFieldSearchTests extends AbstractNodesTests {
                 .addScriptField("s_obj1_test", "_source.obj1.test")
                 .addScriptField("s_obj2", "_source.obj2")
                 .addScriptField("s_obj2_arr2", "_source.obj2.arr2")
+                .addScriptField("s_arr3", "_source.arr3")
                 .execute().actionGet();
+
+        assertThat("Failures " + Arrays.toString(response.shardFailures()), response.shardFailures().length, equalTo(0));
 
         Map<String, Object> sObj1 = (Map<String, Object>) response.hits().getAt(0).field("_source.obj1").value();
         assertThat(sObj1.get("test").toString(), equalTo("something"));
@@ -166,5 +180,8 @@ public class ScriptFieldSearchTests extends AbstractNodesTests {
         assertThat(sObj2Arr2.size(), equalTo(2));
         assertThat(sObj2Arr2.get(0).toString(), equalTo("arr_value1"));
         assertThat(sObj2Arr2.get(1).toString(), equalTo("arr_value2"));
+
+        List sObj2Arr3 = (List) response.hits().getAt(0).field("s_arr3").value();
+        assertThat(((Map) sObj2Arr3.get(0)).get("arr3_field1").toString(), equalTo("arr3_value1"));
     }
 }

@@ -22,10 +22,9 @@ package org.elasticsearch.cluster.routing.operation;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.routing.GroupShardsIterator;
 import org.elasticsearch.cluster.routing.ShardIterator;
+import org.elasticsearch.common.Nullable;
 import org.elasticsearch.index.IndexShardMissingException;
 import org.elasticsearch.indices.IndexMissingException;
-
-import javax.annotation.Nullable;
 
 /**
  * @author kimchy (shay.banon)
@@ -38,9 +37,9 @@ public interface OperationRouting {
 
     GroupShardsIterator broadcastDeleteShards(ClusterState clusterState, String index) throws IndexMissingException, IndexShardMissingException;
 
-    ShardIterator getShards(ClusterState clusterState, String index, String type, String id, @Nullable String routing) throws IndexMissingException, IndexShardMissingException;
+    ShardIterator getShards(ClusterState clusterState, String index, String type, String id, @Nullable String routing, @Nullable String preference) throws IndexMissingException, IndexShardMissingException;
 
     GroupShardsIterator deleteByQueryShards(ClusterState clusterState, String index, @Nullable String routing) throws IndexMissingException;
 
-    GroupShardsIterator searchShards(ClusterState clusterState, String[] indices, @Nullable String queryHint, @Nullable String routing) throws IndexMissingException;
+    GroupShardsIterator searchShards(ClusterState clusterState, String[] indices, @Nullable String queryHint, @Nullable String routing, @Nullable String preference) throws IndexMissingException;
 }

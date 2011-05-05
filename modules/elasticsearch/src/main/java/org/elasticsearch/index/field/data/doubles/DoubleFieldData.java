@@ -21,7 +21,8 @@ package org.elasticsearch.index.field.data.doubles;
 
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.search.FieldCache;
-import org.elasticsearch.common.trove.TDoubleArrayList;
+import org.elasticsearch.common.RamUsage;
+import org.elasticsearch.common.trove.list.array.TDoubleArrayList;
 import org.elasticsearch.index.field.data.FieldDataType;
 import org.elasticsearch.index.field.data.NumericFieldData;
 import org.elasticsearch.index.field.data.support.FieldDataLoader;
@@ -40,6 +41,14 @@ public abstract class DoubleFieldData extends NumericFieldData<DoubleDocFieldDat
     protected DoubleFieldData(String fieldName, double[] values) {
         super(fieldName);
         this.values = values;
+    }
+
+    @Override protected long computeSizeInBytes() {
+        return RamUsage.NUM_BYTES_DOUBLE * values.length + RamUsage.NUM_BYTES_ARRAY_HEADER;
+    }
+
+    public final double[] values() {
+        return this.values;
     }
 
     abstract public double value(int docId);
@@ -102,6 +111,13 @@ public abstract class DoubleFieldData extends NumericFieldData<DoubleDocFieldDat
         void onValue(double value);
     }
 
+    public abstract void forEachValueInDoc(int docId, ValueInDocProc proc);
+
+    public static interface ValueInDocProc {
+        void onValue(int docId, double value);
+
+        void onMissing(int docId);
+    }
 
     public static DoubleFieldData load(IndexReader reader, String field) throws IOException {
         return FieldDataLoader.load(reader, field, new DoubleTypeLoader());
@@ -122,11 +138,11 @@ public abstract class DoubleFieldData extends NumericFieldData<DoubleDocFieldDat
         }
 
         @Override public DoubleFieldData buildSingleValue(String field, int[] ordinals) {
-            return new SingleValueDoubleFieldData(field, ordinals, terms.toNativeArray());
+            return new SingleValueDoubleFieldData(field, ordinals, terms.toArray());
         }
 
         @Override public DoubleFieldData buildMultiValue(String field, int[][] ordinals) {
-            return new MultiValueDoubleFieldData(field, ordinals, terms.toNativeArray());
+            return new MultiValueDoubleFieldData(field, ordinals, terms.toArray());
         }
     }
 }

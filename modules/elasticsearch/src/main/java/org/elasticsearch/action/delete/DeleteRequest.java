@@ -23,12 +23,13 @@ import org.elasticsearch.action.ActionRequestValidationException;
 import org.elasticsearch.action.WriteConsistencyLevel;
 import org.elasticsearch.action.support.replication.ReplicationType;
 import org.elasticsearch.action.support.replication.ShardReplicationOperationRequest;
+import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Required;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.index.VersionType;
 
-import javax.annotation.Nullable;
 import java.io.IOException;
 
 import static org.elasticsearch.action.Actions.*;
@@ -51,6 +52,8 @@ public class DeleteRequest extends ShardReplicationOperationRequest {
     private String id;
     @Nullable private String routing;
     private boolean refresh;
+    private long version;
+    private VersionType versionType = VersionType.INTERNAL;
 
     /**
      * Constructs a new delete request against the specified index. The {@link #type(String)} and {@link #id(String)}
@@ -167,6 +170,17 @@ public class DeleteRequest extends ShardReplicationOperationRequest {
     }
 
     /**
+     * Sets the parent id of this document. Will simply set the routing to this value, as it is only
+     * used for routing with delete requests.
+     */
+    public DeleteRequest parent(String parent) {
+        if (routing == null) {
+            routing = parent;
+        }
+        return this;
+    }
+
+    /**
      * Controls the shard routing of the request. Using this value to hash the shard
      * and not the id.
      */
@@ -197,6 +211,28 @@ public class DeleteRequest extends ShardReplicationOperationRequest {
         return this.refresh;
     }
 
+    /**
+     * Sets the version, which will cause the delete operation to only be performed if a matching
+     * version exists and no changes happened on the doc since then.
+     */
+    public DeleteRequest version(long version) {
+        this.version = version;
+        return this;
+    }
+
+    public long version() {
+        return this.version;
+    }
+
+    public DeleteRequest versionType(VersionType versionType) {
+        this.versionType = versionType;
+        return this;
+    }
+
+    public VersionType versionType() {
+        return this.versionType;
+    }
+
     @Override public void readFrom(StreamInput in) throws IOException {
         super.readFrom(in);
         type = in.readUTF();
@@ -205,6 +241,8 @@ public class DeleteRequest extends ShardReplicationOperationRequest {
             routing = in.readUTF();
         }
         refresh = in.readBoolean();
+        version = in.readLong();
+        versionType = VersionType.fromValue(in.readByte());
     }
 
     @Override public void writeTo(StreamOutput out) throws IOException {
@@ -218,6 +256,8 @@ public class DeleteRequest extends ShardReplicationOperationRequest {
             out.writeUTF(routing);
         }
         out.writeBoolean(refresh);
+        out.writeLong(version);
+        out.writeByte(versionType.getValue());
     }
 
     @Override public String toString() {

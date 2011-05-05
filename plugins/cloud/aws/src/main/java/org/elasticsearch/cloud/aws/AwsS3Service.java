@@ -68,10 +68,47 @@ public class AwsS3Service extends AbstractLifecycleComponent<AwsS3Service> {
             throw new ElasticSearchIllegalArgumentException("No s3 secret_key defined for s3 gateway");
         }
 
+        String proxyHost = componentSettings.get("proxy_host");
+        if (proxyHost != null) {
+            String portString = componentSettings.get("proxy_port", "80");
+            Integer proxyPort;
+            try {
+                proxyPort = Integer.parseInt(portString, 10);
+            } catch (NumberFormatException ex) {
+                throw new ElasticSearchIllegalArgumentException("The configured proxy port value [" + portString + "] is invalid", ex);
+            }
+            clientConfiguration.withProxyHost(proxyHost).setProxyPort(proxyPort);
+        }
+
         this.client = new AmazonS3Client(new BasicAWSCredentials(account, key), clientConfiguration);
 
-        if (componentSettings.get("endpoint") != null) {
-            client.setEndpoint(componentSettings.get("endpoint"));
+        if (componentSettings.get("s3.endpoint") != null) {
+            client.setEndpoint(componentSettings.get("s3.endpoint"));
+        } else if (componentSettings.get("region") != null) {
+            String endpoint;
+            String region = componentSettings.get("region");
+            if ("us-east".equals(region.toLowerCase())) {
+                endpoint = "s3.amazonaws.com";
+            } else if ("us-east-1".equals(region.toLowerCase())) {
+                endpoint = "s3.amazonaws.com";
+            } else if ("us-west".equals(region.toLowerCase())) {
+                endpoint = "s3-us-west-1.amazonaws.com";
+            } else if ("us-west-1".equals(region.toLowerCase())) {
+                endpoint = "s3-us-west-1.amazonaws.com";
+            } else if ("ap-southeast".equals(region.toLowerCase())) {
+                endpoint = "s3-ap-southeast-1.amazonaws.com";
+            } else if ("ap-southeast-1".equals(region.toLowerCase())) {
+                endpoint = "s3-ap-southeast-1.amazonaws.com";
+            } else if ("eu-west".equals(region.toLowerCase())) {
+                endpoint = null; // no specific endpoint for EU (still can be used for region)
+            } else if ("eu-west-1".equals(region.toLowerCase())) {
+                endpoint = null; // no specific endpoint for EU (still can be used for region)
+            } else {
+                throw new ElasticSearchIllegalArgumentException("No automatic endpoint could be derived from region [" + region + "]");
+            }
+            if (endpoint != null) {
+                client.setEndpoint(endpoint);
+            }
         }
 
         return this.client;

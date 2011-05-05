@@ -32,6 +32,7 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.analysis.AnalysisService;
+import org.elasticsearch.index.cache.bloom.none.NoneBloomCache;
 import org.elasticsearch.index.deletionpolicy.KeepOnlyLastDeletionPolicy;
 import org.elasticsearch.index.deletionpolicy.SnapshotDeletionPolicy;
 import org.elasticsearch.index.engine.Engine;
@@ -39,6 +40,7 @@ import org.elasticsearch.index.engine.robin.RobinEngine;
 import org.elasticsearch.index.mapper.ParsedDocument;
 import org.elasticsearch.index.merge.policy.LogByteSizeMergePolicyProvider;
 import org.elasticsearch.index.merge.scheduler.ConcurrentMergeSchedulerProvider;
+import org.elasticsearch.index.settings.IndexSettingsService;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.index.similarity.SimilarityService;
 import org.elasticsearch.index.store.Store;
@@ -46,7 +48,6 @@ import org.elasticsearch.index.store.memory.ByteBufferStore;
 import org.elasticsearch.index.translog.fs.FsTranslog;
 import org.elasticsearch.monitor.parfait.ParfaitService;
 import org.elasticsearch.threadpool.ThreadPool;
-import org.elasticsearch.threadpool.scaling.ScalingThreadPool;
 
 import java.io.File;
 import java.util.concurrent.*;
@@ -167,9 +168,9 @@ public class SimpleEngineBenchmark {
                     .add(field("content", contentItem)).build();
             ParsedDocument pDoc = new ParsedDocument(sId, sId, "type", null, doc, Lucene.STANDARD_ANALYZER, TRANSLOG_PAYLOAD, false);
             if (create) {
-                engine.create(new Engine.Create(pDoc));
+                engine.create(new Engine.Create(null, new Term("_id", sId), pDoc));
             } else {
-                engine.index(new Engine.Index(new Term("_id", sId), pDoc));
+                engine.index(new Engine.Index(null, new Term("_id", sId), pDoc));
             }
         }
         engine.refresh(new Engine.Refresh(true));
@@ -281,9 +282,9 @@ public class SimpleEngineBenchmark {
                             .add(field("content", content(id))).build();
                     ParsedDocument pDoc = new ParsedDocument(sId, sId, "type", null, doc, Lucene.STANDARD_ANALYZER, TRANSLOG_PAYLOAD, false);
                     if (create) {
-                        engine.create(new Engine.Create(pDoc));
+                        engine.create(new Engine.Create(null, new Term("_id", sId), pDoc));
                     } else {
-                        engine.index(new Engine.Index(new Term("_id", sId), pDoc));
+                        engine.index(new Engine.Index(null, new Term("_id", sId), pDoc));
                     }
                 }
             } catch (Exception e) {
@@ -305,10 +306,10 @@ public class SimpleEngineBenchmark {
 
         store.deleteContent();
 
-        ThreadPool threadPool = new ScalingThreadPool();
+        ThreadPool threadPool = new ThreadPool();
         SnapshotDeletionPolicy deletionPolicy = new SnapshotDeletionPolicy(new KeepOnlyLastDeletionPolicy(shardId, settings));
-        Engine engine = new RobinEngine(shardId, settings, store, deletionPolicy, new FsTranslog(shardId, EMPTY_SETTINGS, new File("work/fs-translog"), false), new LogByteSizeMergePolicyProvider(store),
-                new ConcurrentMergeSchedulerProvider(shardId, settings), new AnalysisService(shardId.index()), new SimilarityService(shardId.index()),new ParfaitService(settings));
+        Engine engine = new RobinEngine(shardId, settings, new ThreadPool(), new IndexSettingsService(shardId.index(), settings), store, deletionPolicy, new FsTranslog(shardId, EMPTY_SETTINGS, new File("work/fs-translog"), false), new LogByteSizeMergePolicyProvider(store, new IndexSettingsService(shardId.index(), EMPTY_SETTINGS)),
+                new ConcurrentMergeSchedulerProvider(shardId, settings), new AnalysisService(shardId.index()), new SimilarityService(shardId.index()), new NoneBloomCache(shardId.index()),new ParfaitService(settings));
         engine.start();
 
         SimpleEngineBenchmark benchmark = new SimpleEngineBenchmark(store, engine)

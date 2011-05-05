@@ -26,6 +26,7 @@ import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentBuilderString;
+import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.search.SearchHits;
 import org.elasticsearch.search.facet.Facets;
 import org.elasticsearch.search.internal.InternalSearchResponse;
@@ -92,6 +93,20 @@ public class SearchResponse implements ActionResponse, ToXContent {
      */
     public Facets getFacets() {
         return facets();
+    }
+
+    /**
+     * Has the search operation timed out.
+     */
+    public boolean timedOut() {
+        return internalResponse.timedOut();
+    }
+
+    /**
+     * Has the search operation timed out.
+     */
+    public boolean isTimedOut() {
+        return timedOut();
     }
 
     /**
@@ -205,13 +220,15 @@ public class SearchResponse implements ActionResponse, ToXContent {
         static final XContentBuilderString SHARD = new XContentBuilderString("shard");
         static final XContentBuilderString REASON = new XContentBuilderString("reason");
         static final XContentBuilderString TOOK = new XContentBuilderString("took");
+        static final XContentBuilderString TIMED_OUT = new XContentBuilderString("timed_out");
     }
 
-    @Override public void toXContent(XContentBuilder builder, Params params) throws IOException {
+    @Override public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         if (scrollId != null) {
             builder.field(Fields._SCROLL_ID, scrollId);
         }
         builder.field(Fields.TOOK, tookInMillis);
+        builder.field(Fields.TIMED_OUT, timedOut());
         builder.startObject(Fields._SHARDS);
         builder.field(Fields.TOTAL, totalShards());
         builder.field(Fields.SUCCESSFUL, successfulShards());
@@ -233,6 +250,7 @@ public class SearchResponse implements ActionResponse, ToXContent {
 
         builder.endObject();
         internalResponse.toXContent(builder, params);
+        return builder;
     }
 
     public static SearchResponse readSearchResponse(StreamInput in) throws IOException {
@@ -277,5 +295,17 @@ public class SearchResponse implements ActionResponse, ToXContent {
             out.writeUTF(scrollId);
         }
         out.writeVLong(tookInMillis);
+    }
+
+    @Override public String toString() {
+        try {
+            XContentBuilder builder = XContentFactory.jsonBuilder().prettyPrint();
+            builder.startObject();
+            toXContent(builder, EMPTY_PARAMS);
+            builder.endObject();
+            return builder.string();
+        } catch (IOException e) {
+            return "{ \"error\" : \"" + e.getMessage() + "\"}";
+        }
     }
 }

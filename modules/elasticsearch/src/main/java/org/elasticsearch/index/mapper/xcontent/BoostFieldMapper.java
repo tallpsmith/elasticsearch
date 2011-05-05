@@ -145,22 +145,13 @@ public class BoostFieldMapper extends NumberFieldMapper<Float> implements org.el
         super.parse(context);
     }
 
-    @Override protected Field parseCreateField(ParseContext context) throws IOException {
-        float value = parseFloatValue(context);
+    @Override protected Fieldable parseCreateField(ParseContext context) throws IOException {
+        final float value = parseFloatValue(context);
         if (Float.isNaN(value)) {
             return null;
         }
         context.doc().setBoost(value);
-        Field field = null;
-        if (stored()) {
-            field = new Field(names.indexName(), Numbers.floatToBytes(value), store);
-            if (indexed()) {
-                field.setTokenStream(popCachedStream(precisionStep).setFloatValue(value));
-            }
-        } else if (indexed()) {
-            field = new Field(names.indexName(), popCachedStream(precisionStep).setFloatValue(value));
-        }
-        return field;
+        return new FloatFieldMapper.CustomFloatNumericField(this, value);
     }
 
     private float parseFloatValue(ParseContext context) throws IOException {
@@ -184,10 +175,10 @@ public class BoostFieldMapper extends NumberFieldMapper<Float> implements org.el
         return CONTENT_TYPE;
     }
 
-    @Override public void toXContent(XContentBuilder builder, Params params) throws IOException {
+    @Override public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         // all are defaults, don't write it at all
         if (name().equals(Defaults.NAME) && nullValue == null) {
-            return;
+            return builder;
         }
         builder.startObject(contentType());
         if (!name().equals(Defaults.NAME)) {
@@ -197,6 +188,7 @@ public class BoostFieldMapper extends NumberFieldMapper<Float> implements org.el
             builder.field("null_value", nullValue);
         }
         builder.endObject();
+        return builder;
     }
 
     @Override public void merge(XContentMapper mergeWith, MergeContext mergeContext) throws MergeMappingException {

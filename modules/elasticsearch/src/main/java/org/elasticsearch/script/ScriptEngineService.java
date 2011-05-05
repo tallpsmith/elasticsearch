@@ -19,6 +19,9 @@
 
 package org.elasticsearch.script;
 
+import org.elasticsearch.common.Nullable;
+import org.elasticsearch.search.lookup.SearchLookup;
+
 import java.util.Map;
 
 /**
@@ -32,7 +35,9 @@ public interface ScriptEngineService {
 
     Object compile(String script);
 
-    ExecutableScript executable(Object compiledScript, Map<String, Object> vars);
+    ExecutableScript executable(Object compiledScript, @Nullable Map<String, Object> vars);
+
+    SearchScript search(Object compiledScript, SearchLookup lookup, @Nullable Map<String, Object> vars);
 
     Object execute(Object compiledScript, Map<String, Object> vars);
 

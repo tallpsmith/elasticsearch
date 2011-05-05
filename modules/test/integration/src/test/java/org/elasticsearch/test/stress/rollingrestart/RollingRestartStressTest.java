@@ -20,7 +20,13 @@
 package org.elasticsearch.test.stress.rollingrestart;
 
 import org.elasticsearch.action.admin.cluster.health.ClusterHealthResponse;
+import org.elasticsearch.action.admin.indices.status.IndexShardStatus;
+import org.elasticsearch.action.admin.indices.status.IndicesStatusResponse;
+import org.elasticsearch.action.admin.indices.status.ShardStatus;
 import org.elasticsearch.action.count.CountResponse;
+import org.elasticsearch.action.get.GetResponse;
+import org.elasticsearch.action.search.SearchResponse;
+import org.elasticsearch.action.search.SearchType;
 import org.elasticsearch.common.UUID;
 import org.elasticsearch.common.io.FileSystemUtils;
 import org.elasticsearch.common.logging.ESLogger;
@@ -35,10 +41,13 @@ import org.elasticsearch.env.NodeEnvironment;
 import org.elasticsearch.node.Node;
 import org.elasticsearch.node.NodeBuilder;
 import org.elasticsearch.node.internal.InternalNode;
+import org.elasticsearch.search.SearchHit;
 
 import java.io.File;
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static org.elasticsearch.common.settings.ImmutableSettings.*;
 import static org.elasticsearch.index.query.xcontent.QueryBuilders.*;
 
 /**
@@ -48,6 +57,8 @@ public class RollingRestartStressTest {
 
     private final ESLogger logger = Loggers.getLogger(getClass());
 
+    private int numberOfShards = 5;
+    private int numberOfReplicas = 1;
     private int numberOfNodes = 4;
 
     private int textTokens = 150;
@@ -62,15 +73,26 @@ public class RollingRestartStressTest {
 
     private TimeValue period = TimeValue.timeValueMinutes(20);
 
-    private boolean clearNodeWork = true;
+    private boolean clearNodeData = true;
 
     private Node client;
 
     private AtomicLong indexCounter = new AtomicLong();
+    private AtomicLong idCounter = new AtomicLong();
 
 
     public RollingRestartStressTest numberOfNodes(int numberOfNodes) {
         this.numberOfNodes = numberOfNodes;
+        return this;
+    }
+
+    public RollingRestartStressTest numberOfShards(int numberOfShards) {
+        this.numberOfShards = numberOfShards;
+        return this;
+    }
+
+    public RollingRestartStressTest numberOfReplicas(int numberOfReplicas) {
+        this.numberOfReplicas = numberOfReplicas;
         return this;
     }
 
@@ -104,8 +126,8 @@ public class RollingRestartStressTest {
         return this;
     }
 
-    public RollingRestartStressTest cleanNodeWork(boolean clearNodeWork) {
-        this.clearNodeWork = clearNodeWork;
+    public RollingRestartStressTest cleanNodeData(boolean clearNodeData) {
+        this.clearNodeData = clearNodeData;
         return this;
     }
 
@@ -120,6 +142,11 @@ public class RollingRestartStressTest {
             nodes[i] = NodeBuilder.nodeBuilder().settings(settings).node();
         }
         client = NodeBuilder.nodeBuilder().settings(settings).client(true).node();
+
+        client.client().admin().indices().prepareCreate("test").setSettings(settingsBuilder()
+                .put("index.number_of_shards", numberOfShards)
+                .put("index.number_of_replicas", numberOfReplicas)
+        ).execute().actionGet();
 
         logger.info("********** [START] INDEXING INITIAL DOCS");
         for (long i = 0; i < initialNumberOfDocs; i++) {
@@ -140,10 +167,10 @@ public class RollingRestartStressTest {
         // start doing the rolling restart
         int nodeIndex = 0;
         while (true) {
-            File nodeWork = ((InternalNode) nodes[nodeIndex]).injector().getInstance(NodeEnvironment.class).nodeDataLocation();
+            File nodeData = ((InternalNode) nodes[nodeIndex]).injector().getInstance(NodeEnvironment.class).nodeDataLocation();
             nodes[nodeIndex].close();
-            if (clearNodeWork) {
-                FileSystemUtils.deleteRecursively(nodeWork);
+            if (clearNodeData) {
+                FileSystemUtils.deleteRecursively(nodeData);
             }
 
             try {
@@ -160,6 +187,8 @@ public class RollingRestartStressTest {
             }
 
             nodes[nodeIndex] = NodeBuilder.nodeBuilder().settings(settings).node();
+
+            Thread.sleep(1000);
 
             try {
                 ClusterHealthResponse clusterHealth = client.client().admin().cluster().prepareHealth()
@@ -198,14 +227,59 @@ public class RollingRestartStressTest {
 
         client.client().admin().indices().prepareRefresh().execute().actionGet();
 
+        // check the status
+        IndicesStatusResponse status = client.client().admin().indices().prepareStatus("test").execute().actionGet();
+        for (IndexShardStatus shardStatus : status.index("test")) {
+            ShardStatus shard = shardStatus.shards()[0];
+            logger.info("shard [{}], docs [{}]", shard.shardId(), shard.getDocs().numDocs());
+            for (ShardStatus shardStatu : shardStatus) {
+                if (shard.docs().numDocs() != shardStatu.docs().numDocs()) {
+                    logger.warn("shard doc number does not match!, got {} and {}", shard.docs().numDocs(), shardStatu.docs().numDocs());
+                }
+            }
+        }
+
         // check the count
         for (int i = 0; i < (nodes.length * 5); i++) {
             CountResponse count = client.client().prepareCount().setQuery(matchAllQuery()).execute().actionGet();
-            logger.info("indexed [{}], count [{}]", count.count(), indexCounter.get());
+            logger.info("indexed [{}], count [{}], [{}]", count.count(), indexCounter.get(), count.count() == indexCounter.get() ? "OK" : "FAIL");
             if (count.count() != indexCounter.get()) {
                 logger.warn("count does not match!");
             }
         }
+
+        // scan all the docs, verify all have the same version based on the number of replicas
+        SearchResponse searchResponse = client.client().prepareSearch()
+                .setSearchType(SearchType.SCAN)
+                .setQuery(matchAllQuery())
+                .setSize(50)
+                .setScroll(TimeValue.timeValueMinutes(2))
+                .execute().actionGet();
+        logger.info("Verifying versions for {} hits...", searchResponse.hits().totalHits());
+
+        while (true) {
+            searchResponse = client.client().prepareSearchScroll(searchResponse.scrollId()).setScroll(TimeValue.timeValueMinutes(2)).execute().actionGet();
+            if (searchResponse.failedShards() > 0) {
+                logger.warn("Search Failures " + Arrays.toString(searchResponse.shardFailures()));
+            }
+            for (SearchHit hit : searchResponse.hits()) {
+                long version = -1;
+                for (int i = 0; i < (numberOfReplicas + 1); i++) {
+                    GetResponse getResponse = client.client().prepareGet(hit.index(), hit.type(), hit.id()).execute().actionGet();
+                    if (version == -1) {
+                        version = getResponse.version();
+                    } else {
+                        if (version != getResponse.version()) {
+                            logger.warn("Doc {} has different version numbers {} and {}", hit.id(), version, getResponse.version());
+                        }
+                    }
+                }
+            }
+            if (searchResponse.hits().hits().length == 0) {
+                break;
+            }
+        }
+        logger.info("Done verifying versions");
 
         client.close();
         for (Node node : nodes) {
@@ -253,7 +327,9 @@ public class RollingRestartStressTest {
 
         json.endObject();
 
-        client.client().prepareIndex("test", "type1")
+        String id = Long.toString(idCounter.incrementAndGet());
+        client.client().prepareIndex("test", "type1", id)
+                .setCreate(true)
                 .setSource(json)
                 .execute().actionGet();
         indexCounter.incrementAndGet();
@@ -262,7 +338,7 @@ public class RollingRestartStressTest {
     public static void main(String[] args) throws Exception {
         System.setProperty("es.logger.prefix", "");
 
-        Settings settings = ImmutableSettings.settingsBuilder()
+        Settings settings = settingsBuilder()
                 .put("index.shard.check_index", true)
                 .put("gateway.type", "none")
                 .build();
@@ -270,13 +346,15 @@ public class RollingRestartStressTest {
         RollingRestartStressTest test = new RollingRestartStressTest()
                 .settings(settings)
                 .numberOfNodes(4)
+                .numberOfShards(5)
+                .numberOfReplicas(1)
                 .initialNumberOfDocs(1000)
                 .textTokens(150)
                 .numberOfFields(10)
-                .cleanNodeWork(true)
+                .cleanNodeData(false)
                 .indexers(5)
                 .indexerThrottle(TimeValue.timeValueMillis(50))
-                .period(TimeValue.timeValueMinutes(10));
+                .period(TimeValue.timeValueMinutes(3));
 
         test.run();
     }

@@ -19,10 +19,8 @@
 
 package org.elasticsearch.indices;
 
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.search.FieldCache;
-import org.apache.lucene.search.IndexReaderPurgedListener;
 import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticSearchIllegalStateException;
 import org.elasticsearch.common.collect.ImmutableMap;
 import org.elasticsearch.common.collect.ImmutableSet;
 import org.elasticsearch.common.collect.UnmodifiableIterator;
@@ -40,16 +38,25 @@ import org.elasticsearch.gateway.Gateway;
 import org.elasticsearch.index.*;
 import org.elasticsearch.index.analysis.AnalysisModule;
 import org.elasticsearch.index.analysis.AnalysisService;
+import org.elasticsearch.index.cache.CacheStats;
+import org.elasticsearch.index.cache.IndexCache;
 import org.elasticsearch.index.cache.IndexCacheModule;
-import org.elasticsearch.index.cache.filter.FilterCache;
+import org.elasticsearch.index.engine.Engine;
 import org.elasticsearch.index.engine.IndexEngine;
 import org.elasticsearch.index.engine.IndexEngineModule;
 import org.elasticsearch.index.gateway.IndexGateway;
 import org.elasticsearch.index.gateway.IndexGatewayModule;
+import org.elasticsearch.index.mapper.MapperService;
 import org.elasticsearch.index.mapper.MapperServiceModule;
+import org.elasticsearch.index.merge.MergeStats;
+import org.elasticsearch.index.percolator.PercolatorModule;
+import org.elasticsearch.index.percolator.PercolatorService;
 import org.elasticsearch.index.query.IndexQueryParserModule;
+import org.elasticsearch.index.query.IndexQueryParserService;
 import org.elasticsearch.index.service.IndexService;
+import org.elasticsearch.index.service.InternalIndexService;
 import org.elasticsearch.index.settings.IndexSettingsModule;
+import org.elasticsearch.index.shard.IndexShardState;
 import org.elasticsearch.index.shard.service.IndexShard;
 import org.elasticsearch.index.shard.service.InternalIndexShard;
 import org.elasticsearch.index.similarity.SimilarityModule;
@@ -106,16 +113,6 @@ public class InternalIndicesService extends AbstractLifecycleComponent<IndicesSe
         this.injector = injector;
 
         this.pluginsService = injector.getInstance(PluginsService.class);
-
-        try {
-            FieldCache.DEFAULT.getClass().getMethod("setIndexReaderPurgedListener", IndexReaderPurgedListener.class);
-            // LUCENE MONITOR - This is a hack to eagerly clean caches based on index reader
-            FieldCache.DEFAULT.setIndexReaderPurgedListener(new CacheReaderPurgeListener(this));
-            logger.trace("eager reader based cache eviction enabled");
-        } catch (NoSuchMethodException e) {
-            // no method
-            logger.debug("lucene default FieldCache is used, not enabling eager reader based cache eviction");
-        }
     }
 
     @Override protected void doStart() throws ElasticSearchException {
@@ -128,7 +125,7 @@ public class InternalIndicesService extends AbstractLifecycleComponent<IndicesSe
             threadPool.cached().execute(new Runnable() {
                 @Override public void run() {
                     try {
-                        deleteIndex(index, false);
+                        deleteIndex(index, false, "shutdown");
                     } catch (Exception e) {
                         logger.warn("failed to delete index on stop [" + index + "]", e);
                     } finally {
@@ -153,18 +150,32 @@ public class InternalIndicesService extends AbstractLifecycleComponent<IndicesSe
         return this.indicesLifecycle;
     }
 
-    @Override public IndicesStats stats() {
-        long totalSize = 0;
+    @Override public NodeIndicesStats stats() {
+        long storeTotalSize = 0;
+        long numberOfDocs = 0;
+        CacheStats cacheStats = new CacheStats();
+        MergeStats mergeStats = new MergeStats();
         for (IndexService indexService : indices.values()) {
             for (IndexShard indexShard : indexService) {
                 try {
-                    totalSize += ((InternalIndexShard) indexShard).store().estimateSize().bytes();
+                    storeTotalSize += ((InternalIndexShard) indexShard).store().estimateSize().bytes();
                 } catch (IOException e) {
                     // ignore
                 }
+
+                if (indexShard.state() == IndexShardState.STARTED) {
+                    Engine.Searcher searcher = indexShard.searcher();
+                    try {
+                        numberOfDocs += searcher.reader().numDocs();
+                    } finally {
+                        searcher.release();
+                    }
+                }
+                mergeStats.add(((InternalIndexShard) indexShard).mergeScheduler().stats());
             }
+            cacheStats.add(indexService.cache().stats());
         }
-        return new IndicesStats(new ByteSizeValue(totalSize));
+        return new NodeIndicesStats(new ByteSizeValue(storeTotalSize), numberOfDocs, cacheStats, mergeStats);
     }
 
     /**
@@ -200,6 +211,9 @@ public class InternalIndicesService extends AbstractLifecycleComponent<IndicesSe
     }
 
     public synchronized IndexService createIndex(String sIndexName, Settings settings, String localNodeId) throws ElasticSearchException {
+        if (!lifecycle.started()) {
+            throw new ElasticSearchIllegalStateException("Can't create an index [" + sIndexName + "], node is closed");
+        }
         Index index = new Index(sIndexName);
         if (indicesInjectors.containsKey(index.name())) {
             throw new IndexAlreadyExistsException(index);
@@ -219,7 +233,7 @@ public class InternalIndicesService extends AbstractLifecycleComponent<IndicesSe
         ModulesBuilder modules = new ModulesBuilder();
         modules.add(new IndexNameModule(index));
         modules.add(new LocalNodeIdModule(localNodeId));
-        modules.add(new IndexSettingsModule(indexSettings));
+        modules.add(new IndexSettingsModule(index, indexSettings));
         modules.add(new IndexPluginsModule(indexSettings, pluginsService));
         modules.add(new IndexStoreModule(indexSettings));
         modules.add(new IndexEngineModule(indexSettings));
@@ -230,6 +244,7 @@ public class InternalIndicesService extends AbstractLifecycleComponent<IndicesSe
         modules.add(new MapperServiceModule());
         modules.add(new IndexGatewayModule(indexSettings, injector.getInstance(Gateway.class)));
         modules.add(new IndexModule());
+        modules.add(new PercolatorModule());
 
         Injector indexInjector = modules.createChildInjector(injector);
 
@@ -244,15 +259,15 @@ public class InternalIndicesService extends AbstractLifecycleComponent<IndicesSe
         return indexService;
     }
 
-    @Override public synchronized void cleanIndex(String index) throws ElasticSearchException {
-        deleteIndex(index, false);
+    @Override public synchronized void cleanIndex(String index, String reason) throws ElasticSearchException {
+        deleteIndex(index, false, reason);
     }
 
-    @Override public synchronized void deleteIndex(String index) throws ElasticSearchException {
-        deleteIndex(index, true);
+    @Override public synchronized void deleteIndex(String index, String reason) throws ElasticSearchException {
+        deleteIndex(index, true, reason);
     }
 
-    private void deleteIndex(String index, boolean delete) throws ElasticSearchException {
+    private void deleteIndex(String index, boolean delete, String reason) throws ElasticSearchException {
         Injector indexInjector;
         IndexService indexService;
         synchronized (this) {
@@ -278,14 +293,17 @@ public class InternalIndicesService extends AbstractLifecycleComponent<IndicesSe
             indexInjector.getInstance(closeable).close(delete);
         }
 
-        indexService.close(delete);
+        ((InternalIndexService) indexService).close(delete, reason);
 
-        indexInjector.getInstance(FilterCache.class).close();
+        indexInjector.getInstance(PercolatorService.class).close();
+        indexInjector.getInstance(IndexCache.class).close();
         indexInjector.getInstance(AnalysisService.class).close();
         indexInjector.getInstance(IndexEngine.class).close();
         indexInjector.getInstance(IndexServiceManagement.class).close();
 
         indexInjector.getInstance(IndexGateway.class).close(delete);
+        indexInjector.getInstance(MapperService.class).close();
+        indexInjector.getInstance(IndexQueryParserService.class).close();
 
         Injectors.close(injector);
 
@@ -293,21 +311,6 @@ public class InternalIndicesService extends AbstractLifecycleComponent<IndicesSe
 
         if (delete) {
             FileSystemUtils.deleteRecursively(nodeEnv.indexLocation(new Index(index)));
-        }
-    }
-
-    private static class CacheReaderPurgeListener implements IndexReaderPurgedListener {
-
-        private final IndicesService indicesService;
-
-        private CacheReaderPurgeListener(IndicesService indicesService) {
-            this.indicesService = indicesService;
-        }
-
-        @Override public void indexReaderPurged(IndexReader reader) {
-            for (IndexService indexService : indicesService) {
-                indexService.cache().clear(reader);
-            }
         }
     }
 }

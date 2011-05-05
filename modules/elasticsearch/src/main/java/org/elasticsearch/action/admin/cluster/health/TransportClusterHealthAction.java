@@ -33,8 +33,8 @@ import org.elasticsearch.cluster.routing.ShardRouting;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.gateway.GatewayService;
+import org.elasticsearch.indices.IndexMissingException;
 import org.elasticsearch.threadpool.ThreadPool;
-import org.elasticsearch.timer.TimerService;
 import org.elasticsearch.transport.TransportService;
 
 /**
@@ -44,13 +44,14 @@ public class TransportClusterHealthAction extends TransportMasterNodeOperationAc
 
     private final ClusterName clusterName;
 
-    private final TimerService timerService;
-
     @Inject public TransportClusterHealthAction(Settings settings, TransportService transportService, ClusterService clusterService, ThreadPool threadPool,
-                                                TimerService timerService, ClusterName clusterName) {
+                                                ClusterName clusterName) {
         super(settings, transportService, clusterService, threadPool);
         this.clusterName = clusterName;
-        this.timerService = timerService;
+    }
+
+    @Override protected String executor() {
+        return ThreadPool.Names.CACHED;
     }
 
     @Override protected String transportAction() {
@@ -65,8 +66,8 @@ public class TransportClusterHealthAction extends TransportMasterNodeOperationAc
         return new ClusterHealthResponse();
     }
 
-    @Override protected ClusterHealthResponse masterOperation(ClusterHealthRequest request, ClusterState state) throws ElasticSearchException {
-        int waitFor = 4;
+    @Override protected ClusterHealthResponse masterOperation(ClusterHealthRequest request, ClusterState unusedState) throws ElasticSearchException {
+        int waitFor = 5;
         if (request.waitForStatus() == null) {
             waitFor--;
         }
@@ -79,14 +80,19 @@ public class TransportClusterHealthAction extends TransportMasterNodeOperationAc
         if (request.waitForNodes().isEmpty()) {
             waitFor--;
         }
+        if (request.indices().length == 0) { // check that they actually exists in the meta data
+            waitFor--;
+        }
         if (waitFor == 0) {
             // no need to wait for anything
-            return clusterHealth(request);
+            ClusterState clusterState = clusterService.state();
+            return clusterHealth(request, clusterState);
         }
         long endTime = System.currentTimeMillis() + request.timeout().millis();
         while (true) {
             int waitForCounter = 0;
-            ClusterHealthResponse response = clusterHealth(request);
+            ClusterState clusterState = clusterService.state();
+            ClusterHealthResponse response = clusterHealth(request, clusterState);
             if (request.waitForStatus() != null && response.status().value() <= request.waitForStatus().value()) {
                 waitForCounter++;
             }
@@ -95,6 +101,15 @@ public class TransportClusterHealthAction extends TransportMasterNodeOperationAc
             }
             if (request.waitForActiveShards() != -1 && response.activeShards() >= request.waitForActiveShards()) {
                 waitForCounter++;
+            }
+            if (request.indices().length > 0) {
+                try {
+                    clusterState.metaData().concreteIndices(request.indices());
+                    waitForCounter++;
+                } catch (IndexMissingException e) {
+                    response.status = ClusterHealthStatus.RED; // no indices, make sure its RED
+                    // missing indices, wait a bit more...
+                }
             }
             if (!request.waitForNodes().isEmpty()) {
                 if (request.waitForNodes().startsWith(">=")) {
@@ -147,7 +162,7 @@ public class TransportClusterHealthAction extends TransportMasterNodeOperationAc
             if (waitForCounter == waitFor) {
                 return response;
             }
-            if (timerService.estimatedTimeInMillis() > endTime) {
+            if (System.currentTimeMillis() > endTime) {
                 response.timedOut = true;
                 return response;
             }
@@ -161,14 +176,13 @@ public class TransportClusterHealthAction extends TransportMasterNodeOperationAc
         }
     }
 
-    private ClusterHealthResponse clusterHealth(ClusterHealthRequest request) {
-        ClusterState clusterState = clusterService.state();
+    private ClusterHealthResponse clusterHealth(ClusterHealthRequest request, ClusterState clusterState) {
         RoutingTableValidation validation = clusterState.routingTable().validate(clusterState.metaData());
         ClusterHealthResponse response = new ClusterHealthResponse(clusterName.value(), validation.failures());
         response.numberOfNodes = clusterState.nodes().size();
         response.numberOfDataNodes = clusterState.nodes().dataNodes().size();
 
-        for (String index : clusterState.metaData().concreteIndices(request.indices())) {
+        for (String index : clusterState.metaData().concreteIndicesIgnoreMissing(request.indices())) {
             IndexRoutingTable indexRoutingTable = clusterState.routingTable().index(index);
             IndexMetaData indexMetaData = clusterState.metaData().index(index);
             if (indexRoutingTable == null) {
@@ -247,7 +261,7 @@ public class TransportClusterHealthAction extends TransportMasterNodeOperationAc
         response.status = ClusterHealthStatus.GREEN;
         if (!response.validationFailures().isEmpty()) {
             response.status = ClusterHealthStatus.RED;
-        } else if (clusterState.blocks().hasGlobalBlock(GatewayService.NOT_RECOVERED_FROM_GATEWAY_BLOCK)) {
+        } else if (clusterState.blocks().hasGlobalBlock(GatewayService.STATE_NOT_RECOVERED_BLOCK)) {
             response.status = ClusterHealthStatus.RED;
         } else {
             for (ClusterIndexHealth indexHealth : response) {

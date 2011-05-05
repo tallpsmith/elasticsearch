@@ -22,6 +22,7 @@ package org.elasticsearch.monitor.process;
 import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.unit.TimeValue;
 
 /**
  * @author kimchy (shay.banon)
@@ -32,19 +33,31 @@ public class ProcessService extends AbstractComponent {
 
     private final ProcessInfo info;
 
+    private final TimeValue refreshInterval;
+
+    private ProcessStats cachedStats;
+
     @Inject public ProcessService(Settings settings, ProcessProbe probe) {
         super(settings);
         this.probe = probe;
-        this.info = probe.processInfo();
 
-        logger.trace("Using probe [{}]", probe);
+        this.refreshInterval = componentSettings.getAsTime("refresh_interval", TimeValue.timeValueSeconds(5));
+
+        this.info = probe.processInfo();
+        this.info.refreshInterval = refreshInterval.millis();
+        this.cachedStats = probe.processStats();
+
+        logger.debug("Using probe [{}] with refresh_interval [{}]", probe, refreshInterval);
     }
 
     public ProcessInfo info() {
         return this.info;
     }
 
-    public ProcessStats stats() {
-        return probe.processStats();
+    public synchronized ProcessStats stats() {
+        if ((System.currentTimeMillis() - cachedStats.timestamp()) > refreshInterval.millis()) {
+            cachedStats = probe.processStats();
+        }
+        return cachedStats;
     }
 }

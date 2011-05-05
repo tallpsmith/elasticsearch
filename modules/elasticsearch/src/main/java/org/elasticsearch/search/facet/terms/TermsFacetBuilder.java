@@ -38,13 +38,15 @@ public class TermsFacetBuilder extends AbstractFacetBuilder {
     private String fieldName;
     private String[] fieldsNames;
     private int size = 10;
-    private String[] exclude;
+    private Boolean allTerms;
+    private Object[] exclude;
     private String regex;
     private int regexFlags = 0;
     private TermsFacet.ComparatorType comparatorType;
     private String script;
     private String lang;
     private Map<String, Object> params;
+    String executionHint;
 
     /**
      * Construct a new term facet with the provided facet name.
@@ -109,7 +111,7 @@ public class TermsFacetBuilder extends AbstractFacetBuilder {
     /**
      * A set of terms that will be excluded.
      */
-    public TermsFacetBuilder exclude(String... exclude) {
+    public TermsFacetBuilder exclude(Object... exclude) {
         this.exclude = exclude;
         return this;
     }
@@ -163,6 +165,14 @@ public class TermsFacetBuilder extends AbstractFacetBuilder {
     }
 
     /**
+     * An execution hint to how the facet is computed.
+     */
+    public TermsFacetBuilder executionHint(String executionHint) {
+        this.executionHint = executionHint;
+        return this;
+    }
+
+    /**
      * A parameter that will be passed to the script.
      *
      * @param name  The name of the script parameter.
@@ -176,13 +186,22 @@ public class TermsFacetBuilder extends AbstractFacetBuilder {
         return this;
     }
 
-    @Override public void toXContent(XContentBuilder builder, Params params) throws IOException {
+    /**
+     * Sets all possible terms to be loaded, even ones with 0 count. Note, this *should not* be used
+     * with a field that has many possible terms.
+     */
+    public TermsFacetBuilder allTerms(boolean allTerms) {
+        this.allTerms = allTerms;
+        return this;
+    }
+
+    @Override public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         if (fieldName == null && fieldsNames == null && script == null) {
             throw new SearchSourceBuilderException("field/fields/script must be set on terms facet for facet [" + name + "]");
         }
         builder.startObject(name);
 
-        builder.startObject(TermsFacetCollectorParser.NAME);
+        builder.startObject(TermsFacet.TYPE);
         if (fieldsNames != null) {
             if (fieldsNames.length == 1) {
                 builder.field("field", fieldsNames[0]);
@@ -195,7 +214,7 @@ public class TermsFacetBuilder extends AbstractFacetBuilder {
         builder.field("size", size);
         if (exclude != null) {
             builder.startArray("exclude");
-            for (String ex : exclude) {
+            for (Object ex : exclude) {
                 builder.value(ex);
             }
             builder.endArray();
@@ -209,6 +228,9 @@ public class TermsFacetBuilder extends AbstractFacetBuilder {
         if (comparatorType != null) {
             builder.field("order", comparatorType.name().toLowerCase());
         }
+        if (allTerms != null) {
+            builder.field("all_terms", allTerms);
+        }
 
         if (script != null) {
             builder.field("script", script);
@@ -220,10 +242,15 @@ public class TermsFacetBuilder extends AbstractFacetBuilder {
             }
         }
 
+        if (executionHint != null) {
+            builder.field("execution_hint", executionHint);
+        }
+
         builder.endObject();
 
         addFilterFacetAndGlobal(builder, params);
 
         builder.endObject();
+        return builder;
     }
 }

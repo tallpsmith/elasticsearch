@@ -27,9 +27,7 @@ import org.elasticsearch.common.netty.bootstrap.ServerBootstrap;
 import org.elasticsearch.common.netty.channel.*;
 import org.elasticsearch.common.netty.channel.socket.nio.NioServerSocketChannelFactory;
 import org.elasticsearch.common.netty.channel.socket.oio.OioServerSocketChannelFactory;
-import org.elasticsearch.common.netty.handler.codec.http.HttpChunkAggregator;
-import org.elasticsearch.common.netty.handler.codec.http.HttpRequestDecoder;
-import org.elasticsearch.common.netty.handler.codec.http.HttpResponseEncoder;
+import org.elasticsearch.common.netty.handler.codec.http.*;
 import org.elasticsearch.common.netty.handler.timeout.ReadTimeoutException;
 import org.elasticsearch.common.netty.logging.InternalLogger;
 import org.elasticsearch.common.netty.logging.InternalLoggerFactory;
@@ -43,6 +41,7 @@ import org.elasticsearch.common.transport.PortsRange;
 import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.http.*;
+import org.elasticsearch.http.HttpRequest;
 import org.elasticsearch.transport.BindTransportException;
 import org.elasticsearch.transport.netty.NettyInternalESLoggerFactory;
 
@@ -75,6 +74,10 @@ public class NettyHttpServerTransport extends AbstractLifecycleComponent<HttpSer
     private final int workerCount;
 
     private final boolean blockingServer;
+
+    private final boolean compression;
+
+    private final int compressionLevel;
 
     private final String port;
 
@@ -109,13 +112,16 @@ public class NettyHttpServerTransport extends AbstractLifecycleComponent<HttpSer
         this.workerCount = componentSettings.getAsInt("worker_count", Runtime.getRuntime().availableProcessors() * 2);
         this.blockingServer = settings.getAsBoolean("http.blocking_server", settings.getAsBoolean(TCP_BLOCKING_SERVER, settings.getAsBoolean(TCP_BLOCKING, false)));
         this.port = componentSettings.get("port", settings.get("http.port", "9200-9300"));
-        this.bindHost = componentSettings.get("bind_host");
-        this.publishHost = componentSettings.get("publish_host");
+        this.bindHost = componentSettings.get("bind_host", settings.get("http.bind_host", settings.get("http.host")));
+        this.publishHost = componentSettings.get("publish_host", settings.get("http.publish_host", settings.get("http.host")));
         this.tcpNoDelay = componentSettings.getAsBoolean("tcp_no_delay", settings.getAsBoolean(TCP_NO_DELAY, true));
         this.tcpKeepAlive = componentSettings.getAsBoolean("tcp_keep_alive", settings.getAsBoolean(TCP_KEEP_ALIVE, true));
         this.reuseAddress = componentSettings.getAsBoolean("reuse_address", settings.getAsBoolean(TCP_REUSE_ADDRESS, NetworkUtils.defaultReuseAddress()));
         this.tcpSendBufferSize = componentSettings.getAsBytesSize("tcp_send_buffer_size", settings.getAsBytesSize(TCP_SEND_BUFFER_SIZE, TCP_DEFAULT_SEND_BUFFER_SIZE));
         this.tcpReceiveBufferSize = componentSettings.getAsBytesSize("tcp_receive_buffer_size", settings.getAsBytesSize(TCP_RECEIVE_BUFFER_SIZE, TCP_DEFAULT_RECEIVE_BUFFER_SIZE));
+
+        this.compression = settings.getAsBoolean("http.compression", true);
+        this.compressionLevel = settings.getAsInt("http.compression_level", 6);
 
         // validate max content length
         if (maxContentLength.bytes() > Integer.MAX_VALUE) {
@@ -151,8 +157,14 @@ public class NettyHttpServerTransport extends AbstractLifecycleComponent<HttpSer
                 ChannelPipeline pipeline = Channels.pipeline();
                 pipeline.addLast("openChannels", serverOpenChannels);
                 pipeline.addLast("decoder", new HttpRequestDecoder());
+                if (compression) {
+                    pipeline.addLast("decoder_compress", new HttpContentDecompressor());
+                }
                 pipeline.addLast("aggregator", new HttpChunkAggregator((int) maxContentLength.bytes()));
                 pipeline.addLast("encoder", new HttpResponseEncoder());
+                if (compression) {
+                    pipeline.addLast("encoder_compress", new HttpContentCompressor(compressionLevel));
+                }
                 pipeline.addLast("handler", requestHandler);
                 return pipeline;
             }

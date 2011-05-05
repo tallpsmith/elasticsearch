@@ -35,7 +35,7 @@ import org.elasticsearch.rest.*;
 import java.io.IOException;
 
 import static org.elasticsearch.rest.RestRequest.Method.*;
-import static org.elasticsearch.rest.RestResponse.Status.*;
+import static org.elasticsearch.rest.RestStatus.*;
 import static org.elasticsearch.rest.action.support.RestXContentBuilder.*;
 
 /**
@@ -110,8 +110,8 @@ public class RestIndicesAliasesAction extends BaseRestHandler {
                 channel.sendResponse(new XContentThrowableRestResponse(request, e));
             } catch (IOException e1) {
                 logger.warn("Failed to send response", e1);
-                return;
             }
+            return;
         }
         client.admin().indices().aliases(indicesAliasesRequest, new ActionListener<IndicesAliasesResponse>() {
             @Override public void onResponse(IndicesAliasesResponse response) {

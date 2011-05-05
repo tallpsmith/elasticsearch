@@ -24,9 +24,9 @@ import org.elasticsearch.index.cache.field.data.FieldDataCache;
 import org.elasticsearch.index.field.data.FieldDataType;
 import org.elasticsearch.index.field.data.NumericFieldData;
 import org.elasticsearch.index.mapper.MapperService;
+import org.elasticsearch.search.facet.AbstractFacetCollector;
 import org.elasticsearch.search.facet.Facet;
 import org.elasticsearch.search.facet.FacetPhaseExecutionException;
-import org.elasticsearch.search.facet.support.AbstractFacetCollector;
 import org.elasticsearch.search.internal.SearchContext;
 
 import java.io.IOException;
@@ -35,8 +35,6 @@ import java.io.IOException;
  * @author kimchy (shay.banon)
  */
 public class RangeFacetCollector extends AbstractFacetCollector {
-
-    private final String fieldName;
 
     private final String indexFieldName;
 
@@ -52,7 +50,6 @@ public class RangeFacetCollector extends AbstractFacetCollector {
 
     public RangeFacetCollector(String facetName, String fieldName, RangeFacet.Entry[] entries, SearchContext context) {
         super(facetName);
-        this.fieldName = fieldName;
         this.fieldDataCache = context.fieldDataCache();
         this.entries = entries;
 
@@ -77,11 +74,14 @@ public class RangeFacetCollector extends AbstractFacetCollector {
     }
 
     @Override protected void doCollect(int doc) throws IOException {
+        for (RangeFacet.Entry entry : entries) {
+            entry.foundInDoc = false;
+        }
         fieldData.forEachValueInDoc(doc, rangeProc);
     }
 
     @Override public Facet facet() {
-        return new InternalRangeFacet(facetName, fieldName, fieldName, entries);
+        return new InternalRangeFacet(facetName, entries);
     }
 
     public static class RangeProc implements NumericFieldData.DoubleValueInDocProc {
@@ -94,9 +94,20 @@ public class RangeFacetCollector extends AbstractFacetCollector {
 
         @Override public void onValue(int docId, double value) {
             for (RangeFacet.Entry entry : entries) {
+                if (entry.foundInDoc) {
+                    continue;
+                }
                 if (value >= entry.getFrom() && value < entry.getTo()) {
+                    entry.foundInDoc = true;
                     entry.count++;
+                    entry.totalCount++;
                     entry.total += value;
+                    if (value < entry.min) {
+                        entry.min = value;
+                    }
+                    if (value > entry.max) {
+                        entry.max = value;
+                    }
                 }
             }
         }

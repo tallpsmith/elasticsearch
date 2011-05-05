@@ -32,6 +32,8 @@ import org.elasticsearch.cluster.routing.GroupShardsIterator;
 import org.elasticsearch.cluster.routing.ShardIterator;
 import org.elasticsearch.cluster.routing.ShardRouting;
 import org.elasticsearch.common.inject.Inject;
+import org.elasticsearch.common.io.stream.StreamInput;
+import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.engine.Engine;
 import org.elasticsearch.index.gateway.IndexShardGatewayService;
@@ -65,6 +67,10 @@ public class TransportIndicesStatusAction extends TransportBroadcastOperationAct
         super(settings, threadPool, clusterService, transportService);
         this.peerRecoveryTarget = peerRecoveryTarget;
         this.indicesService = indicesService;
+    }
+
+    @Override protected String executor() {
+        return ThreadPool.Names.CACHED;
     }
 
     @Override protected String transportAction() {
@@ -132,7 +138,7 @@ public class TransportIndicesStatusAction extends TransportBroadcastOperationAct
     }
 
     @Override protected IndexShardStatusRequest newShardRequest(ShardRouting shard, IndicesStatusRequest request) {
-        return new IndexShardStatusRequest(shard.index(), shard.id());
+        return new IndexShardStatusRequest(shard.index(), shard.id(), request);
     }
 
     @Override protected ShardStatus newShardResponse() {
@@ -152,7 +158,7 @@ public class TransportIndicesStatusAction extends TransportBroadcastOperationAct
         if (indexShard.state() == IndexShardState.STARTED) {
 //            shardStatus.estimatedFlushableMemorySize = indexShard.estimateFlushableMemorySize();
             shardStatus.translogId = indexShard.translog().currentId();
-            shardStatus.translogOperations = indexShard.translog().size();
+            shardStatus.translogOperations = indexShard.translog().numberOfOperations();
             Engine.Searcher searcher = indexShard.searcher();
             try {
                 shardStatus.docs = new DocsStatus();
@@ -162,87 +168,96 @@ public class TransportIndicesStatusAction extends TransportBroadcastOperationAct
             } finally {
                 searcher.release();
             }
-        }
-        // check on going recovery (from peer or gateway)
-        RecoveryStatus peerRecoveryStatus = indexShard.peerRecoveryStatus();
-        if (peerRecoveryStatus == null) {
-            peerRecoveryStatus = peerRecoveryTarget.peerRecoveryStatus(indexShard.shardId());
-        }
-        if (peerRecoveryStatus != null) {
-            PeerRecoveryStatus.Stage stage;
-            switch (peerRecoveryStatus.stage()) {
-                case INIT:
-                    stage = PeerRecoveryStatus.Stage.INIT;
-                    break;
-                case INDEX:
-                    stage = PeerRecoveryStatus.Stage.INDEX;
-                    break;
-                case TRANSLOG:
-                    stage = PeerRecoveryStatus.Stage.TRANSLOG;
-                    break;
-                case FINALIZE:
-                    stage = PeerRecoveryStatus.Stage.FINALIZE;
-                    break;
-                case DONE:
-                    stage = PeerRecoveryStatus.Stage.DONE;
-                    break;
-                default:
-                    stage = PeerRecoveryStatus.Stage.INIT;
-            }
-            shardStatus.peerRecoveryStatus = new PeerRecoveryStatus(stage, peerRecoveryStatus.startTime(), peerRecoveryStatus.time(),
-                    peerRecoveryStatus.phase1TotalSize(), peerRecoveryStatus.phase1ExistingTotalSize(),
-                    peerRecoveryStatus.currentFilesSize(), peerRecoveryStatus.currentTranslogOperations());
+
+            shardStatus.mergeStats = indexShard.mergeScheduler().stats();
+            shardStatus.refreshStats = indexShard.refreshStats();
         }
 
-        IndexShardGatewayService gatewayService = indexService.shardInjector(request.shardId()).getInstance(IndexShardGatewayService.class);
-        org.elasticsearch.index.gateway.RecoveryStatus gatewayRecoveryStatus = gatewayService.recoveryStatus();
-        if (gatewayRecoveryStatus != null) {
-            GatewayRecoveryStatus.Stage stage;
-            switch (gatewayRecoveryStatus.stage()) {
-                case INIT:
-                    stage = GatewayRecoveryStatus.Stage.INIT;
-                    break;
-                case INDEX:
-                    stage = GatewayRecoveryStatus.Stage.INDEX;
-                    break;
-                case TRANSLOG:
-                    stage = GatewayRecoveryStatus.Stage.TRANSLOG;
-                    break;
-                case DONE:
-                    stage = GatewayRecoveryStatus.Stage.DONE;
-                    break;
-                default:
-                    stage = GatewayRecoveryStatus.Stage.INIT;
+        if (request.recovery) {
+            // check on going recovery (from peer or gateway)
+            RecoveryStatus peerRecoveryStatus = indexShard.peerRecoveryStatus();
+            if (peerRecoveryStatus == null) {
+                peerRecoveryStatus = peerRecoveryTarget.peerRecoveryStatus(indexShard.shardId());
             }
-            shardStatus.gatewayRecoveryStatus = new GatewayRecoveryStatus(stage, gatewayRecoveryStatus.startTime(), gatewayRecoveryStatus.time(),
-                    gatewayRecoveryStatus.index().totalSize(), gatewayRecoveryStatus.index().reusedTotalSize(), gatewayRecoveryStatus.index().currentFilesSize(), gatewayRecoveryStatus.translog().currentTranslogOperations());
+            if (peerRecoveryStatus != null) {
+                PeerRecoveryStatus.Stage stage;
+                switch (peerRecoveryStatus.stage()) {
+                    case INIT:
+                        stage = PeerRecoveryStatus.Stage.INIT;
+                        break;
+                    case INDEX:
+                        stage = PeerRecoveryStatus.Stage.INDEX;
+                        break;
+                    case TRANSLOG:
+                        stage = PeerRecoveryStatus.Stage.TRANSLOG;
+                        break;
+                    case FINALIZE:
+                        stage = PeerRecoveryStatus.Stage.FINALIZE;
+                        break;
+                    case DONE:
+                        stage = PeerRecoveryStatus.Stage.DONE;
+                        break;
+                    default:
+                        stage = PeerRecoveryStatus.Stage.INIT;
+                }
+                shardStatus.peerRecoveryStatus = new PeerRecoveryStatus(stage, peerRecoveryStatus.startTime(), peerRecoveryStatus.time(),
+                        peerRecoveryStatus.phase1TotalSize(), peerRecoveryStatus.phase1ExistingTotalSize(),
+                        peerRecoveryStatus.currentFilesSize(), peerRecoveryStatus.currentTranslogOperations());
+            }
+
+            IndexShardGatewayService gatewayService = indexService.shardInjector(request.shardId()).getInstance(IndexShardGatewayService.class);
+            org.elasticsearch.index.gateway.RecoveryStatus gatewayRecoveryStatus = gatewayService.recoveryStatus();
+            if (gatewayRecoveryStatus != null) {
+                GatewayRecoveryStatus.Stage stage;
+                switch (gatewayRecoveryStatus.stage()) {
+                    case INIT:
+                        stage = GatewayRecoveryStatus.Stage.INIT;
+                        break;
+                    case INDEX:
+                        stage = GatewayRecoveryStatus.Stage.INDEX;
+                        break;
+                    case TRANSLOG:
+                        stage = GatewayRecoveryStatus.Stage.TRANSLOG;
+                        break;
+                    case DONE:
+                        stage = GatewayRecoveryStatus.Stage.DONE;
+                        break;
+                    default:
+                        stage = GatewayRecoveryStatus.Stage.INIT;
+                }
+                shardStatus.gatewayRecoveryStatus = new GatewayRecoveryStatus(stage, gatewayRecoveryStatus.startTime(), gatewayRecoveryStatus.time(),
+                        gatewayRecoveryStatus.index().totalSize(), gatewayRecoveryStatus.index().reusedTotalSize(), gatewayRecoveryStatus.index().currentFilesSize(), gatewayRecoveryStatus.translog().currentTranslogOperations());
+            }
         }
 
-        SnapshotStatus snapshotStatus = gatewayService.snapshotStatus();
-        if (snapshotStatus != null) {
-            GatewaySnapshotStatus.Stage stage;
-            switch (snapshotStatus.stage()) {
-                case DONE:
-                    stage = GatewaySnapshotStatus.Stage.DONE;
-                    break;
-                case FAILURE:
-                    stage = GatewaySnapshotStatus.Stage.FAILURE;
-                    break;
-                case TRANSLOG:
-                    stage = GatewaySnapshotStatus.Stage.TRANSLOG;
-                    break;
-                case FINALIZE:
-                    stage = GatewaySnapshotStatus.Stage.FINALIZE;
-                    break;
-                case INDEX:
-                    stage = GatewaySnapshotStatus.Stage.INDEX;
-                    break;
-                default:
-                    stage = GatewaySnapshotStatus.Stage.NONE;
-                    break;
+        if (request.snapshot) {
+            IndexShardGatewayService gatewayService = indexService.shardInjector(request.shardId()).getInstance(IndexShardGatewayService.class);
+            SnapshotStatus snapshotStatus = gatewayService.snapshotStatus();
+            if (snapshotStatus != null) {
+                GatewaySnapshotStatus.Stage stage;
+                switch (snapshotStatus.stage()) {
+                    case DONE:
+                        stage = GatewaySnapshotStatus.Stage.DONE;
+                        break;
+                    case FAILURE:
+                        stage = GatewaySnapshotStatus.Stage.FAILURE;
+                        break;
+                    case TRANSLOG:
+                        stage = GatewaySnapshotStatus.Stage.TRANSLOG;
+                        break;
+                    case FINALIZE:
+                        stage = GatewaySnapshotStatus.Stage.FINALIZE;
+                        break;
+                    case INDEX:
+                        stage = GatewaySnapshotStatus.Stage.INDEX;
+                        break;
+                    default:
+                        stage = GatewaySnapshotStatus.Stage.NONE;
+                        break;
+                }
+                shardStatus.gatewaySnapshotStatus = new GatewaySnapshotStatus(stage, snapshotStatus.startTime(), snapshotStatus.time(),
+                        snapshotStatus.index().totalSize(), snapshotStatus.translog().expectedNumberOfOperations());
             }
-            shardStatus.gatewaySnapshotStatus = new GatewaySnapshotStatus(stage, snapshotStatus.startTime(), snapshotStatus.time(),
-                    snapshotStatus.index().totalSize(), snapshotStatus.translog().expectedNumberOfOperations());
         }
 
         return shardStatus;
@@ -250,11 +265,29 @@ public class TransportIndicesStatusAction extends TransportBroadcastOperationAct
 
     public static class IndexShardStatusRequest extends BroadcastShardOperationRequest {
 
+        boolean recovery;
+
+        boolean snapshot;
+
         IndexShardStatusRequest() {
         }
 
-        IndexShardStatusRequest(String index, int shardId) {
+        IndexShardStatusRequest(String index, int shardId, IndicesStatusRequest request) {
             super(index, shardId);
+            recovery = request.recovery();
+            snapshot = request.snapshot();
+        }
+
+        @Override public void readFrom(StreamInput in) throws IOException {
+            super.readFrom(in);
+            recovery = in.readBoolean();
+            snapshot = in.readBoolean();
+        }
+
+        @Override public void writeTo(StreamOutput out) throws IOException {
+            super.writeTo(out);
+            out.writeBoolean(recovery);
+            out.writeBoolean(snapshot);
         }
     }
 }

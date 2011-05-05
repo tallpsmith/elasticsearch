@@ -37,7 +37,7 @@ import java.util.concurrent.ConcurrentMap;
 /**
  * @author kimchy (shay.banon)
  */
-public abstract class AbstractConcurrentMapFieldDataCache extends AbstractIndexComponent implements FieldDataCache {
+public abstract class AbstractConcurrentMapFieldDataCache extends AbstractIndexComponent implements FieldDataCache, IndexReader.ReaderFinishedListener {
 
     private final ConcurrentMap<Object, ConcurrentMap<String, FieldData>> cache;
 
@@ -51,33 +51,56 @@ public abstract class AbstractConcurrentMapFieldDataCache extends AbstractIndexC
     }
 
     @Override public void close() throws ElasticSearchException {
-        cache.clear();
+        clear();
     }
 
     @Override public void clear() {
         cache.clear();
     }
 
+    @Override public void finished(IndexReader reader) {
+        clear(reader);
+    }
+
     @Override public void clear(IndexReader reader) {
-        ConcurrentMap<String, FieldData> map = cache.remove(reader.getFieldCacheKey());
+        ConcurrentMap<String, FieldData> map = cache.remove(reader.getCoreCacheKey());
         // help soft/weak handling GC
         if (map != null) {
             map.clear();
         }
     }
 
-    @Override public void clearUnreferenced() {
-        // nothing to do here...
+    @Override public long sizeInBytes() {
+        // the overhead of the map is not really relevant...
+        long sizeInBytes = 0;
+        for (ConcurrentMap<String, FieldData> map : cache.values()) {
+            for (FieldData fieldData : map.values()) {
+                sizeInBytes += fieldData.sizeInBytes();
+            }
+        }
+        return sizeInBytes;
+    }
+
+    @Override public long sizeInBytes(String fieldName) {
+        long sizeInBytes = 0;
+        for (ConcurrentMap<String, FieldData> map : cache.values()) {
+            FieldData fieldData = map.get(fieldName);
+            if (fieldData != null) {
+                sizeInBytes += fieldData.sizeInBytes();
+            }
+        }
+        return sizeInBytes;
     }
 
     @Override public FieldData cache(FieldDataType type, IndexReader reader, String fieldName) throws IOException {
-        ConcurrentMap<String, FieldData> fieldDataCache = cache.get(reader.getFieldCacheKey());
+        ConcurrentMap<String, FieldData> fieldDataCache = cache.get(reader.getCoreCacheKey());
         if (fieldDataCache == null) {
             synchronized (creationMutex) {
-                fieldDataCache = cache.get(reader.getFieldCacheKey());
+                fieldDataCache = cache.get(reader.getCoreCacheKey());
                 if (fieldDataCache == null) {
                     fieldDataCache = buildFieldDataMap();
-                    cache.put(reader.getFieldCacheKey(), fieldDataCache);
+                    reader.addReaderFinishedListener(this);
+                    cache.put(reader.getCoreCacheKey(), fieldDataCache);
                 }
             }
         }

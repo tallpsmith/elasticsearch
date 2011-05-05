@@ -20,18 +20,17 @@
 package org.elasticsearch.index.translog;
 
 import org.apache.lucene.index.Term;
+import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Streamable;
 import org.elasticsearch.common.lease.Releasable;
-import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.util.concurrent.NotThreadSafe;
 import org.elasticsearch.common.util.concurrent.ThreadSafe;
 import org.elasticsearch.index.engine.Engine;
 import org.elasticsearch.index.shard.IndexShardComponent;
 
-import javax.annotation.Nullable;
 import java.io.IOException;
 import java.io.InputStream;
 
@@ -49,12 +48,17 @@ public interface Translog extends IndexShardComponent {
     /**
      * Returns the number of operations in the transaction log.
      */
-    int size();
+    int numberOfOperations();
 
     /**
      * The estimated memory size this translog is taking.
      */
-    ByteSizeValue estimateMemorySize();
+    long memorySizeInBytes();
+
+    /**
+     * Returns the size in bytes of the translog.
+     */
+    long translogSizeInBytes();
 
     /**
      * Creates a new transaction log internally. Note, users of this class should make
@@ -195,6 +199,7 @@ public interface Translog extends IndexShardComponent {
         private byte[] source;
         private String routing;
         private String parent;
+        private long version;
 
         public Create() {
         }
@@ -203,6 +208,7 @@ public interface Translog extends IndexShardComponent {
             this(create.type(), create.id(), create.source());
             this.routing = create.routing();
             this.parent = create.parent();
+            this.version = create.version();
         }
 
         public Create(String type, String id, byte[] source) {
@@ -239,6 +245,10 @@ public interface Translog extends IndexShardComponent {
             return this.parent;
         }
 
+        public long version() {
+            return this.version;
+        }
+
         @Override public void readFrom(StreamInput in) throws IOException {
             int version = in.readVInt(); // version
             id = in.readUTF();
@@ -255,10 +265,13 @@ public interface Translog extends IndexShardComponent {
                     parent = in.readUTF();
                 }
             }
+            if (version >= 3) {
+                this.version = in.readLong();
+            }
         }
 
         @Override public void writeTo(StreamOutput out) throws IOException {
-            out.writeVInt(2); // version
+            out.writeVInt(3); // version
             out.writeUTF(id);
             out.writeUTF(type);
             out.writeVInt(source.length);
@@ -275,12 +288,14 @@ public interface Translog extends IndexShardComponent {
                 out.writeBoolean(true);
                 out.writeUTF(parent);
             }
+            out.writeLong(version);
         }
     }
 
     static class Index implements Operation {
         private String id;
         private String type;
+        private long version;
         private byte[] source;
         private String routing;
         private String parent;
@@ -292,6 +307,7 @@ public interface Translog extends IndexShardComponent {
             this(index.type(), index.id(), index.source());
             this.routing = index.routing();
             this.parent = index.parent();
+            this.version = index.version();
         }
 
         public Index(String type, String id, byte[] source) {
@@ -328,6 +344,10 @@ public interface Translog extends IndexShardComponent {
             return this.source;
         }
 
+        public long version() {
+            return this.version;
+        }
+
         @Override public void readFrom(StreamInput in) throws IOException {
             int version = in.readVInt(); // version
             id = in.readUTF();
@@ -344,10 +364,13 @@ public interface Translog extends IndexShardComponent {
                     parent = in.readUTF();
                 }
             }
+            if (version >= 3) {
+                this.version = in.readLong();
+            }
         }
 
         @Override public void writeTo(StreamOutput out) throws IOException {
-            out.writeVInt(2); // version
+            out.writeVInt(3); // version
             out.writeUTF(id);
             out.writeUTF(type);
             out.writeVInt(source.length);
@@ -364,17 +387,20 @@ public interface Translog extends IndexShardComponent {
                 out.writeBoolean(true);
                 out.writeUTF(parent);
             }
+            out.writeLong(version);
         }
     }
 
     static class Delete implements Operation {
         private Term uid;
+        private long version;
 
         public Delete() {
         }
 
         public Delete(Engine.Delete delete) {
             this(delete.uid());
+            this.version = delete.version();
         }
 
         public Delete(Term uid) {
@@ -393,15 +419,23 @@ public interface Translog extends IndexShardComponent {
             return this.uid;
         }
 
+        public long version() {
+            return this.version;
+        }
+
         @Override public void readFrom(StreamInput in) throws IOException {
-            in.readVInt(); // version
+            int version = in.readVInt(); // version
             uid = new Term(in.readUTF(), in.readUTF());
+            if (version >= 1) {
+                this.version = in.readLong();
+            }
         }
 
         @Override public void writeTo(StreamOutput out) throws IOException {
-            out.writeVInt(0); // version
+            out.writeVInt(1); // version
             out.writeUTF(uid.field());
             out.writeUTF(uid.text());
+            out.writeLong(version);
         }
     }
 

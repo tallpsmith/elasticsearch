@@ -23,13 +23,18 @@ import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.document.Fieldable;
 import org.apache.lucene.index.Term;
+import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.Filter;
-import org.apache.lucene.search.TermsFilter;
+import org.apache.lucene.search.FilterClause;
+import org.apache.lucene.search.PublicTermsFilter;
+import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.collect.ImmutableMap;
 import org.elasticsearch.common.collect.Sets;
 import org.elasticsearch.common.collect.UnmodifiableIterator;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.io.Streams;
+import org.elasticsearch.common.lucene.search.TermFilter;
+import org.elasticsearch.common.lucene.search.XBooleanFilter;
 import org.elasticsearch.common.regex.Regex;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.concurrent.ThreadSafe;
@@ -41,8 +46,8 @@ import org.elasticsearch.index.analysis.AnalysisService;
 import org.elasticsearch.index.mapper.xcontent.XContentDocumentMapperParser;
 import org.elasticsearch.index.settings.IndexSettings;
 import org.elasticsearch.indices.InvalidTypeNameException;
+import org.elasticsearch.indices.TypeMissingException;
 
-import javax.annotation.Nullable;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -121,27 +126,14 @@ public class MapperService extends AbstractIndexComponent implements Iterable<Do
         logger.debug("using dynamic[{}], default mapping: location[{}] and source[{}]", dynamic, defaultMappingLocation, defaultMappingSource);
     }
 
-    @Override public UnmodifiableIterator<DocumentMapper> iterator() {
-        return mappers.values().iterator();
+    public void close() {
+        for (DocumentMapper documentMapper : mappers.values()) {
+            documentMapper.close();
+        }
     }
 
-    public DocumentMapper type(String type) {
-        DocumentMapper mapper = mappers.get(type);
-        if (mapper != null) {
-            return mapper;
-        }
-        if (!dynamic) {
-            return null;
-        }
-        // go ahead and dynamically create it
-        synchronized (mutex) {
-            mapper = mappers.get(type);
-            if (mapper != null) {
-                return mapper;
-            }
-            add(type, null);
-            return mappers.get(type);
-        }
+    @Override public UnmodifiableIterator<DocumentMapper> iterator() {
+        return mappers.values().iterator();
     }
 
     public DocumentMapperParser documentMapperParser() {
@@ -166,8 +158,15 @@ public class MapperService extends AbstractIndexComponent implements Iterable<Do
     private void add(DocumentMapper mapper) {
         synchronized (mutex) {
             if (mapper.type().charAt(0) == '_') {
-                throw new InvalidTypeNameException("Document mapping type name can't start with '_'");
+                throw new InvalidTypeNameException("mapping type name [" + mapper.type() + "] can't start with '_'");
             }
+            if (mapper.type().contains("#")) {
+                throw new InvalidTypeNameException("mapping type name [" + mapper.type() + "] should not include '#' in it");
+            }
+            if (mapper.type().contains(".")) {
+                logger.warn("Type [{}] contains a '.', it is recommended not to include it within a type name", mapper.type());
+            }
+            remove(mapper.type()); // first remove it (in case its an update, we need to remove the aggregated mappers)
             mappers = newMapBuilder(mappers).put(mapper.type(), mapper).immutableMap();
             mapper.addFieldMapperListener(fieldMapperListener, true);
         }
@@ -179,6 +178,7 @@ public class MapperService extends AbstractIndexComponent implements Iterable<Do
             if (docMapper == null) {
                 return;
             }
+            docMapper.close();
             mappers = newMapBuilder(mappers).remove(type).immutableMap();
 
             // we need to remove those mappers
@@ -231,15 +231,86 @@ public class MapperService extends AbstractIndexComponent implements Iterable<Do
         return mappers.get(type);
     }
 
+    public DocumentMapper documentMapperWithAutoCreate(String type) {
+        DocumentMapper mapper = mappers.get(type);
+        if (mapper != null) {
+            return mapper;
+        }
+        if (!dynamic) {
+            throw new TypeMissingException(index, type, "typing to auto create mapping, but dynamic mapping is disabled");
+        }
+        // go ahead and dynamically create it
+        synchronized (mutex) {
+            mapper = mappers.get(type);
+            if (mapper != null) {
+                return mapper;
+            }
+            add(type, null);
+            return mappers.get(type);
+        }
+    }
+
     /**
-     * A filter to filter based on several types.
+     * A filter to filter based on several types. Will not throw types missing failure, and will
+     * simply filter it out also.
      */
     public Filter typesFilter(String... types) {
         if (types.length == 1) {
-            return documentMapper(types[0]).typeFilter();
+            DocumentMapper docMapper = documentMapper(types[0]);
+            if (docMapper == null) {
+                return new TermFilter(new Term(types[0]));
+            }
+            return docMapper.typeFilter();
         }
-        TermsFilter termsFilter = new TermsFilter();
+        // see if we can use terms filter
+        boolean useTermsFilter = true;
         for (String type : types) {
+            DocumentMapper docMapper = documentMapper(type);
+            if (docMapper == null) {
+                useTermsFilter = false;
+                break;
+            }
+            if (!docMapper.typeMapper().indexed()) {
+                useTermsFilter = false;
+                break;
+            }
+        }
+        if (useTermsFilter) {
+            PublicTermsFilter termsFilter = new PublicTermsFilter();
+            for (String type : types) {
+                termsFilter.addTerm(new Term(TypeFieldMapper.NAME, type));
+            }
+            return termsFilter;
+        } else {
+            XBooleanFilter bool = new XBooleanFilter();
+            for (String type : types) {
+                DocumentMapper docMapper = documentMapper(type);
+                if (docMapper == null) {
+                    bool.add(new FilterClause(new TermFilter(new Term(TypeFieldMapper.NAME, type)), BooleanClause.Occur.SHOULD));
+                } else {
+                    bool.add(new FilterClause(docMapper.typeFilter(), BooleanClause.Occur.SHOULD));
+                }
+            }
+            return bool;
+        }
+    }
+
+    /**
+     * A filter to filter based on several types.
+     */
+    public Filter typesFilterFailOnMissing(String... types) throws TypeMissingException {
+        if (types.length == 1) {
+            DocumentMapper docMapper = documentMapper(types[0]);
+            if (docMapper == null) {
+                throw new TypeMissingException(index, types[0]);
+            }
+            return docMapper.typeFilter();
+        }
+        PublicTermsFilter termsFilter = new PublicTermsFilter();
+        for (String type : types) {
+            if (!hasMapping(type)) {
+                throw new TypeMissingException(index, type);
+            }
             termsFilter.addTerm(new Term(TypeFieldMapper.NAME, type));
         }
         return termsFilter;
@@ -446,7 +517,7 @@ public class MapperService extends AbstractIndexComponent implements Iterable<Do
         }
     }
 
-    class SmartIndexNameSearchAnalyzer extends Analyzer {
+    final class SmartIndexNameSearchAnalyzer extends Analyzer {
 
         private final Analyzer defaultAnalyzer;
 
@@ -497,7 +568,7 @@ public class MapperService extends AbstractIndexComponent implements Iterable<Do
             return defaultAnalyzer.getOffsetGap(field);
         }
 
-        @Override public TokenStream tokenStream(String fieldName, Reader reader) {
+        @Override public final TokenStream tokenStream(String fieldName, Reader reader) {
             int dotIndex = fieldName.indexOf('.');
             if (dotIndex != -1) {
                 String possibleType = fieldName.substring(0, dotIndex);
@@ -518,7 +589,7 @@ public class MapperService extends AbstractIndexComponent implements Iterable<Do
             return defaultAnalyzer.tokenStream(fieldName, reader);
         }
 
-        @Override public TokenStream reusableTokenStream(String fieldName, Reader reader) throws IOException {
+        @Override public final TokenStream reusableTokenStream(String fieldName, Reader reader) throws IOException {
             int dotIndex = fieldName.indexOf('.');
             if (dotIndex != -1) {
                 String possibleType = fieldName.substring(0, dotIndex);

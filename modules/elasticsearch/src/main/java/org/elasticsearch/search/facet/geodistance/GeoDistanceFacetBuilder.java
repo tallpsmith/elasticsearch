@@ -217,7 +217,7 @@ public class GeoDistanceFacetBuilder extends AbstractFacetBuilder {
         return this;
     }
 
-    @Override public void toXContent(XContentBuilder builder, Params params) throws IOException {
+    @Override public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         if (fieldName == null) {
             throw new SearchSourceBuilderException("field must be set on geo_distance facet for facet [" + name + "]");
         }
@@ -227,12 +227,12 @@ public class GeoDistanceFacetBuilder extends AbstractFacetBuilder {
 
         builder.startObject(name);
 
-        builder.startObject(GeoDistanceFacetCollectorParser.NAME);
+        builder.startObject(GeoDistanceFacet.TYPE);
 
         if (geohash != null) {
             builder.field(fieldName, geohash);
         } else {
-            builder.startArray(fieldName).value(lat).value(lon).endArray();
+            builder.startArray(fieldName).value(lon).value(lat).endArray();
         }
 
         if (valueFieldName != null) {
@@ -274,6 +274,7 @@ public class GeoDistanceFacetBuilder extends AbstractFacetBuilder {
         addFilterFacetAndGlobal(builder, params);
 
         builder.endObject();
+        return builder;
     }
 
     private static class Entry {

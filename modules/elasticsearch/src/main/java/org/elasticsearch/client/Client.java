@@ -34,6 +34,8 @@ import org.elasticsearch.action.get.GetResponse;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.index.IndexResponse;
 import org.elasticsearch.action.mlt.MoreLikeThisRequest;
+import org.elasticsearch.action.percolate.PercolateRequest;
+import org.elasticsearch.action.percolate.PercolateResponse;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.search.SearchScrollRequest;
@@ -43,10 +45,10 @@ import org.elasticsearch.client.action.delete.DeleteRequestBuilder;
 import org.elasticsearch.client.action.deletebyquery.DeleteByQueryRequestBuilder;
 import org.elasticsearch.client.action.get.GetRequestBuilder;
 import org.elasticsearch.client.action.index.IndexRequestBuilder;
+import org.elasticsearch.client.action.percolate.PercolateRequestBuilder;
 import org.elasticsearch.client.action.search.SearchRequestBuilder;
 import org.elasticsearch.client.action.search.SearchScrollRequestBuilder;
-
-import javax.annotation.Nullable;
+import org.elasticsearch.common.Nullable;
 
 /**
  * A client provides a one stop interface for performing actions/operations against the cluster.
@@ -314,4 +316,22 @@ public interface Client {
      * @param listener A listener to be notified of the result
      */
     void moreLikeThis(MoreLikeThisRequest request, ActionListener<SearchResponse> listener);
+
+    /**
+     * Percolates a request returning the matches documents.
+     */
+    ActionFuture<PercolateResponse> percolate(PercolateRequest request);
+
+    /**
+     * Percolates a request returning the matches documents.
+     */
+    void percolate(PercolateRequest request, ActionListener<PercolateResponse> listener);
+
+    /**
+     * Percolates a request returning the matches documents.
+     *
+     * @param index The index to percolate the doc
+     * @param type  The type of the doc
+     */
+    PercolateRequestBuilder preparePercolate(String index, String type);
 }

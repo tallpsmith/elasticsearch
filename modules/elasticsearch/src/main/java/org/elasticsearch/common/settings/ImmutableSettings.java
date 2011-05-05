@@ -76,7 +76,11 @@ public class ImmutableSettings implements Settings {
     }
 
     @Override public Settings getComponentSettings(Class component) {
-        return getComponentSettings("org.elasticsearch", component);
+        if (component.getName().startsWith("org.elasticsearch")) {
+            return getComponentSettings("org.elasticsearch", component);
+        }
+        // not starting with org.elasticsearch, just remove the first package part (probably org/net/com)
+        return getComponentSettings(component.getName().substring(0, component.getName().indexOf('.')), component);
     }
 
     @Override public Settings getComponentSettings(String prefix, Class component) {
@@ -209,16 +213,11 @@ public class ImmutableSettings implements Settings {
             try {
                 return (Class<? extends T>) getClassLoader().loadClass(fullClassName);
             } catch (ClassNotFoundException e1) {
-                fullClassName = prefixPackage + toCamelCase(sValue) + "." + Strings.capitalize(toCamelCase(sValue)) + suffixClassName;
+                fullClassName = prefixPackage + toCamelCase(sValue).toLowerCase() + "." + Strings.capitalize(toCamelCase(sValue)) + suffixClassName;
                 try {
                     return (Class<? extends T>) getClassLoader().loadClass(fullClassName);
                 } catch (ClassNotFoundException e2) {
-                    fullClassName = prefixPackage + toCamelCase(sValue).toLowerCase() + "." + Strings.capitalize(toCamelCase(sValue)) + suffixClassName;
-                    try {
-                        return (Class<? extends T>) getClassLoader().loadClass(fullClassName);
-                    } catch (ClassNotFoundException e3) {
-                        throw new NoClassSettingsException("Failed to load class setting [" + setting + "] with value [" + sValue + "]", e);
-                    }
+                    throw new NoClassSettingsException("Failed to load class setting [" + setting + "] with value [" + sValue + "]", e);
                 }
             }
         }

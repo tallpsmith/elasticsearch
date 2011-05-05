@@ -25,9 +25,9 @@ import org.elasticsearch.index.field.data.FieldDataType;
 import org.elasticsearch.index.field.data.NumericFieldData;
 import org.elasticsearch.index.mapper.FieldMapper;
 import org.elasticsearch.index.mapper.MapperService;
+import org.elasticsearch.search.facet.AbstractFacetCollector;
 import org.elasticsearch.search.facet.Facet;
 import org.elasticsearch.search.facet.FacetPhaseExecutionException;
-import org.elasticsearch.search.facet.support.AbstractFacetCollector;
 import org.elasticsearch.search.internal.SearchContext;
 
 import java.io.IOException;
@@ -37,10 +37,8 @@ import java.io.IOException;
  */
 public class KeyValueRangeFacetCollector extends AbstractFacetCollector {
 
-    private final String keyFieldName;
     private final String keyIndexFieldName;
 
-    private final String valueFieldName;
     private final String valueIndexFieldName;
 
     private final FieldDataCache fieldDataCache;
@@ -49,14 +47,13 @@ public class KeyValueRangeFacetCollector extends AbstractFacetCollector {
     private NumericFieldData keyFieldData;
 
     private final FieldDataType valueFieldDataType;
-    private NumericFieldData valueFieldData;
 
     private final RangeFacet.Entry[] entries;
 
+    private final RangeProc rangeProc;
+
     public KeyValueRangeFacetCollector(String facetName, String keyFieldName, String valueFieldName, RangeFacet.Entry[] entries, SearchContext context) {
         super(facetName);
-        this.keyFieldName = keyFieldName;
-        this.valueFieldName = valueFieldName;
         this.entries = entries;
         this.fieldDataCache = context.fieldDataCache();
 
@@ -79,66 +76,69 @@ public class KeyValueRangeFacetCollector extends AbstractFacetCollector {
         }
         valueIndexFieldName = mapper.names().indexName();
         valueFieldDataType = mapper.fieldDataType();
+
+        this.rangeProc = new RangeProc(entries);
     }
 
     @Override protected void doSetNextReader(IndexReader reader, int docBase) throws IOException {
         keyFieldData = (NumericFieldData) fieldDataCache.cache(keyFieldDataType, reader, keyIndexFieldName);
-        valueFieldData = (NumericFieldData) fieldDataCache.cache(valueFieldDataType, reader, valueIndexFieldName);
+        rangeProc.valueFieldData = (NumericFieldData) fieldDataCache.cache(valueFieldDataType, reader, valueIndexFieldName);
     }
 
     @Override protected void doCollect(int doc) throws IOException {
-        if (keyFieldData.multiValued()) {
-            if (valueFieldData.multiValued()) {
-                // both multi valued, intersect based on the minimum size
-                double[] keys = keyFieldData.doubleValues(doc);
-                double[] values = valueFieldData.doubleValues(doc);
-                int size = Math.min(keys.length, values.length);
-                for (int i = 0; i < size; i++) {
-                    double key = keys[i];
-                    for (RangeFacet.Entry entry : entries) {
-                        if (key >= entry.getFrom() && key < entry.getTo()) {
-                            entry.count++;
-                            entry.total += values[i];
-                        }
-                    }
+        for (RangeFacet.Entry entry : entries) {
+            entry.foundInDoc = false;
+        }
+        keyFieldData.forEachValueInDoc(doc, rangeProc);
+    }
+
+    @Override public Facet facet() {
+        return new InternalRangeFacet(facetName, entries);
+    }
+
+    public static class RangeProc implements NumericFieldData.DoubleValueInDocProc {
+
+        private final RangeFacet.Entry[] entries;
+
+        NumericFieldData valueFieldData;
+
+        public RangeProc(RangeFacet.Entry[] entries) {
+            this.entries = entries;
+        }
+
+        @Override public void onValue(int docId, double value) {
+            for (RangeFacet.Entry entry : entries) {
+                if (entry.foundInDoc) {
+                    continue;
                 }
-            } else {
-                // key multi valued, value is a single value
-                double value = valueFieldData.doubleValue(doc);
-                for (double key : keyFieldData.doubleValues(doc)) {
-                    for (RangeFacet.Entry entry : entries) {
-                        if (key >= entry.getFrom() && key < entry.getTo()) {
-                            entry.count++;
-                            entry.total += value;
+                if (value >= entry.getFrom() && value < entry.getTo()) {
+                    entry.foundInDoc = true;
+                    entry.count++;
+                    if (valueFieldData.multiValued()) {
+                        double[] valuesValues = valueFieldData.doubleValues(docId);
+                        entry.totalCount += valuesValues.length;
+                        for (double valueValue : valuesValues) {
+                            entry.total += valueValue;
+                            if (valueValue < entry.min) {
+                                entry.min = valueValue;
+                            }
+                            if (valueValue > entry.max) {
+                                entry.max = valueValue;
+                            }
                         }
-                    }
-                }
-            }
-        } else {
-            double key = keyFieldData.doubleValue(doc);
-            if (valueFieldData.multiValued()) {
-                for (RangeFacet.Entry entry : entries) {
-                    if (key >= entry.getFrom() && key < entry.getTo()) {
-                        entry.count++;
-                        for (double value : valueFieldData.doubleValues(doc)) {
-                            entry.total += value;
+                    } else {
+                        double valueValue = valueFieldData.doubleValue(docId);
+                        entry.totalCount++;
+                        entry.total += valueValue;
+                        if (valueValue < entry.min) {
+                            entry.min = valueValue;
                         }
-                    }
-                }
-            } else {
-                // both key and value are not multi valued
-                double value = valueFieldData.doubleValue(doc);
-                for (RangeFacet.Entry entry : entries) {
-                    if (key >= entry.getFrom() && key < entry.getTo()) {
-                        entry.count++;
-                        entry.total += value;
+                        if (valueValue > entry.max) {
+                            entry.max = valueValue;
+                        }
                     }
                 }
             }
         }
-    }
-
-    @Override public Facet facet() {
-        return new InternalRangeFacet(facetName, keyFieldName, valueFieldName, entries);
     }
 }

@@ -21,40 +21,36 @@ package org.elasticsearch.gateway.local;
 
 import org.elasticsearch.ElasticSearchException;
 import org.elasticsearch.action.FailedNodeException;
-import org.elasticsearch.cluster.*;
-import org.elasticsearch.cluster.metadata.IndexMetaData;
-import org.elasticsearch.cluster.metadata.IndexTemplateMetaData;
-import org.elasticsearch.cluster.metadata.MetaData;
-import org.elasticsearch.cluster.metadata.MetaDataCreateIndexService;
-import org.elasticsearch.cluster.routing.IndexRoutingTable;
-import org.elasticsearch.cluster.routing.IndexShardRoutingTable;
-import org.elasticsearch.cluster.routing.MutableShardRouting;
-import org.elasticsearch.cluster.routing.RoutingNode;
+import org.elasticsearch.cluster.ClusterChangedEvent;
+import org.elasticsearch.cluster.ClusterService;
+import org.elasticsearch.cluster.ClusterState;
+import org.elasticsearch.cluster.ClusterStateListener;
+import org.elasticsearch.cluster.routing.*;
 import org.elasticsearch.common.collect.Sets;
 import org.elasticsearch.common.component.AbstractLifecycleComponent;
+import org.elasticsearch.common.compress.lzf.LZF;
+import org.elasticsearch.common.compress.lzf.LZFOutputStream;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.Module;
 import org.elasticsearch.common.io.FileSystemUtils;
 import org.elasticsearch.common.io.Streams;
+import org.elasticsearch.common.io.stream.BytesStreamInput;
+import org.elasticsearch.common.io.stream.CachedStreamInput;
+import org.elasticsearch.common.io.stream.LZFStreamInput;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.*;
-import org.elasticsearch.discovery.Discovery;
 import org.elasticsearch.env.NodeEnvironment;
 import org.elasticsearch.gateway.Gateway;
 import org.elasticsearch.gateway.GatewayException;
 import org.elasticsearch.index.gateway.local.LocalIndexGatewayModule;
+import org.elasticsearch.index.shard.ShardId;
 
 import java.io.*;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static java.util.concurrent.Executors.*;
-import static org.elasticsearch.cluster.ClusterState.*;
-import static org.elasticsearch.cluster.metadata.MetaData.*;
-import static org.elasticsearch.common.unit.TimeValue.*;
 import static org.elasticsearch.common.util.concurrent.EsExecutors.*;
 
 /**
@@ -68,11 +64,13 @@ public class LocalGateway extends AbstractLifecycleComponent<Gateway> implements
 
     private final NodeEnvironment nodeEnv;
 
-    private final MetaDataCreateIndexService createIndexService;
-
     private final TransportNodesListGatewayMetaState listGatewayMetaState;
 
     private final TransportNodesListGatewayStartedShards listGatewayStartedShards;
+
+
+    private final boolean compress;
+    private final boolean prettyPrint;
 
     private volatile LocalGatewayMetaState currentMetaState;
 
@@ -82,14 +80,16 @@ public class LocalGateway extends AbstractLifecycleComponent<Gateway> implements
 
     private volatile boolean initialized = false;
 
-    @Inject public LocalGateway(Settings settings, ClusterService clusterService, MetaDataCreateIndexService createIndexService,
-                                NodeEnvironment nodeEnv, TransportNodesListGatewayMetaState listGatewayMetaState, TransportNodesListGatewayStartedShards listGatewayStartedShards) {
+    @Inject public LocalGateway(Settings settings, ClusterService clusterService, NodeEnvironment nodeEnv,
+                                TransportNodesListGatewayMetaState listGatewayMetaState, TransportNodesListGatewayStartedShards listGatewayStartedShards) {
         super(settings);
         this.clusterService = clusterService;
-        this.createIndexService = createIndexService;
         this.nodeEnv = nodeEnv;
         this.listGatewayMetaState = listGatewayMetaState.initGateway(this);
         this.listGatewayStartedShards = listGatewayStartedShards.initGateway(this);
+
+        this.compress = componentSettings.getAsBoolean("compress", true);
+        this.prettyPrint = componentSettings.getAsBoolean("pretty", false);
     }
 
     @Override public String type() {
@@ -149,63 +149,11 @@ public class LocalGateway extends AbstractLifecycleComponent<Gateway> implements
         }
         if (electedState == null) {
             logger.debug("no state elected");
-            listener.onSuccess();
-            return;
+            listener.onSuccess(ClusterState.builder().build());
+        } else {
+            logger.debug("elected state from [{}]", electedState.node());
+            listener.onSuccess(ClusterState.builder().version(electedState.state().version()).metaData(electedState.state().metaData()).build());
         }
-        if (electedState.state().metaData().indices().isEmpty()) {
-            logger.debug("no indices in metadata");
-            listener.onSuccess();
-            return;
-        }
-
-        logger.debug("elected state from [{}]", electedState.node());
-        final LocalGatewayMetaState state = electedState.state();
-        final AtomicInteger indicesCounter = new AtomicInteger(state.metaData().indices().size());
-        clusterService.submitStateUpdateTask("local-gateway-elected-state", new ProcessedClusterStateUpdateTask() {
-            @Override public ClusterState execute(ClusterState currentState) {
-                MetaData.Builder metaDataBuilder = newMetaDataBuilder()
-                        .metaData(currentState.metaData());
-                // mark the metadata as read from gateway
-                metaDataBuilder.markAsRecoveredFromGateway();
-
-                // add the index templates
-                for (Map.Entry<String, IndexTemplateMetaData> entry : state.metaData().templates().entrySet()) {
-                    metaDataBuilder.put(entry.getValue());
-                }
-
-                return newClusterStateBuilder().state(currentState)
-                        .version(state.version())
-                        .metaData(metaDataBuilder).build();
-            }
-
-            @Override public void clusterStateProcessed(ClusterState clusterState) {
-                // go over the meta data and create indices, we don't really need to copy over
-                // the meta data per index, since we create the index and it will be added automatically
-                for (final IndexMetaData indexMetaData : state.metaData()) {
-                    try {
-                        createIndexService.createIndex(new MetaDataCreateIndexService.Request(MetaDataCreateIndexService.Request.Origin.GATEWAY, "gateway", indexMetaData.index())
-                                .settings(indexMetaData.settings())
-                                .mappingsMetaData(indexMetaData.mappings())
-                                .state(indexMetaData.state())
-                                .timeout(timeValueSeconds(30)),
-
-                                new MetaDataCreateIndexService.Listener() {
-                                    @Override public void onResponse(MetaDataCreateIndexService.Response response) {
-                                        if (indicesCounter.decrementAndGet() == 0) {
-                                            listener.onSuccess();
-                                        }
-                                    }
-
-                                    @Override public void onFailure(Throwable t) {
-                                        logger.error("failed to create index [{}]", t, indexMetaData.index());
-                                    }
-                                });
-                    } catch (IOException e) {
-                        logger.error("failed to create index [{}]", e, indexMetaData.index());
-                    }
-                }
-            }
-        });
     }
 
     @Override public Class<? extends Module> suggestIndexGateway() {
@@ -217,20 +165,20 @@ public class LocalGateway extends AbstractLifecycleComponent<Gateway> implements
     }
 
     @Override public void clusterChanged(final ClusterChangedEvent event) {
-        // nothing to do until we actually recover from the gateway
-        if (!event.state().metaData().recoveredFromGateway()) {
-            return;
-        }
-
         // the location is set to null, so we should not store it (for example, its not a data/master node)
         if (location == null) {
             return;
         }
 
-        // we only write the local metadata if this is a possible master node, the metadata has changed, and
-        // we don't have a NO_MASTER block (in which case, the routing is cleaned, and we don't want to override what
-        // we have now, since it might be needed when later on performing full state recovery)
-        if (event.state().nodes().localNode().masterNode() && event.metaDataChanged() && !event.state().blocks().hasGlobalBlock(Discovery.NO_MASTER_BLOCK)) {
+        // nothing to do until we actually recover from the gateway or any other block indicates we need to disable persistency
+        if (event.state().blocks().disableStatePersistence()) {
+            return;
+        }
+
+        // we only write the local metadata if this is a possible master node
+        // currently, we always write the metadata, since we want to keep it in sync with the latest version, but
+        // we need to think of a better way to not persist it when nothing changed
+        if (event.state().nodes().localNode().masterNode()) {
             executor.execute(new Runnable() {
                 @Override public void run() {
                     LocalGatewayMetaState.Builder builder = LocalGatewayMetaState.builder();
@@ -243,13 +191,18 @@ public class LocalGateway extends AbstractLifecycleComponent<Gateway> implements
                     try {
                         LocalGatewayMetaState stateToWrite = builder.build();
                         XContentBuilder xContentBuilder = XContentFactory.contentBuilder(XContentType.JSON);
-                        xContentBuilder.prettyPrint();
+                        if (prettyPrint) {
+                            xContentBuilder.prettyPrint();
+                        }
                         xContentBuilder.startObject();
                         LocalGatewayMetaState.Builder.toXContent(stateToWrite, xContentBuilder, ToXContent.EMPTY_PARAMS);
                         xContentBuilder.endObject();
 
                         File stateFile = new File(location, "metadata-" + event.state().version());
-                        FileOutputStream fos = new FileOutputStream(stateFile);
+                        OutputStream fos = new FileOutputStream(stateFile);
+                        if (compress) {
+                            fos = new LZFOutputStream(fos);
+                        }
                         fos.write(xContentBuilder.unsafeBytes(), 0, xContentBuilder.unsafeBytesLength());
                         fos.close();
 
@@ -289,9 +242,15 @@ public class LocalGateway extends AbstractLifecycleComponent<Gateway> implements
                     // so they won't get removed (we want to keep the fact that those shards are allocated on this node if needed)
                     for (IndexRoutingTable indexRoutingTable : event.state().routingTable()) {
                         for (IndexShardRoutingTable indexShardRoutingTable : indexRoutingTable) {
-                            if (indexShardRoutingTable.primaryShard().active()) {
+                            if (indexShardRoutingTable.countWithState(ShardRoutingState.STARTED) == indexShardRoutingTable.size()) {
                                 builder.remove(indexShardRoutingTable.shardId());
                             }
+                        }
+                    }
+                    // remove deleted indices from the started shards
+                    for (ShardId shardId : builder.build().shards().keySet()) {
+                        if (!event.state().metaData().hasIndex(shardId.index().name())) {
+                            builder.remove(shardId);
                         }
                     }
                     // now, add all the ones that are active and on this node
@@ -308,13 +267,18 @@ public class LocalGateway extends AbstractLifecycleComponent<Gateway> implements
                     try {
                         LocalGatewayStartedShards stateToWrite = builder.build();
                         XContentBuilder xContentBuilder = XContentFactory.contentBuilder(XContentType.JSON);
-                        xContentBuilder.prettyPrint();
+                        if (prettyPrint) {
+                            xContentBuilder.prettyPrint();
+                        }
                         xContentBuilder.startObject();
                         LocalGatewayStartedShards.Builder.toXContent(stateToWrite, xContentBuilder, ToXContent.EMPTY_PARAMS);
                         xContentBuilder.endObject();
 
                         File stateFile = new File(location, "shards-" + event.state().version());
-                        FileOutputStream fos = new FileOutputStream(stateFile);
+                        OutputStream fos = new FileOutputStream(stateFile);
+                        if (compress) {
+                            fos = new LZFOutputStream(fos);
+                        }
                         fos.write(xContentBuilder.unsafeBytes(), 0, xContentBuilder.unsafeBytesLength());
                         fos.close();
 
@@ -354,7 +318,7 @@ public class LocalGateway extends AbstractLifecycleComponent<Gateway> implements
         initialized = true;
 
         // if this is not a possible master node or data node, bail, we won't save anything here...
-        if (!clusterService.localNode().masterNode() || !clusterService.localNode().dataNode()) {
+        if (!clusterService.localNode().masterNode() && !clusterService.localNode().dataNode()) {
             location = null;
         } else {
             // create the location where the state will be stored
@@ -368,7 +332,7 @@ public class LocalGateway extends AbstractLifecycleComponent<Gateway> implements
                         this.currentMetaState = readMetaState(Streams.copyToByteArray(new FileInputStream(new File(location, "metadata-" + version))));
                     }
                 } catch (Exception e) {
-                    logger.warn("failed to read local state", e);
+                    logger.warn("failed to read local state (metadata)", e);
                 }
             }
 
@@ -379,7 +343,7 @@ public class LocalGateway extends AbstractLifecycleComponent<Gateway> implements
                         this.currentStartedShards = readStartedShards(Streams.copyToByteArray(new FileInputStream(new File(location, "shards-" + version))));
                     }
                 } catch (Exception e) {
-                    logger.warn("failed to read local state", e);
+                    logger.warn("failed to read local state (started shards)", e);
                 }
             }
         }
@@ -438,7 +402,13 @@ public class LocalGateway extends AbstractLifecycleComponent<Gateway> implements
     private LocalGatewayMetaState readMetaState(byte[] data) throws IOException {
         XContentParser parser = null;
         try {
-            parser = XContentFactory.xContent(XContentType.JSON).createParser(data);
+            if (LZF.isCompressed(data)) {
+                BytesStreamInput siBytes = new BytesStreamInput(data);
+                LZFStreamInput siLzf = CachedStreamInput.cachedLzf(siBytes);
+                parser = XContentFactory.xContent(XContentType.JSON).createParser(siLzf);
+            } else {
+                parser = XContentFactory.xContent(XContentType.JSON).createParser(data);
+            }
             return LocalGatewayMetaState.Builder.fromXContent(parser);
         } finally {
             if (parser != null) {
@@ -450,7 +420,13 @@ public class LocalGateway extends AbstractLifecycleComponent<Gateway> implements
     private LocalGatewayStartedShards readStartedShards(byte[] data) throws IOException {
         XContentParser parser = null;
         try {
-            parser = XContentFactory.xContent(XContentType.JSON).createParser(data);
+            if (LZF.isCompressed(data)) {
+                BytesStreamInput siBytes = new BytesStreamInput(data);
+                LZFStreamInput siLzf = CachedStreamInput.cachedLzf(siBytes);
+                parser = XContentFactory.xContent(XContentType.JSON).createParser(siLzf);
+            } else {
+                parser = XContentFactory.xContent(XContentType.JSON).createParser(data);
+            }
             return LocalGatewayStartedShards.Builder.fromXContent(parser);
         } finally {
             if (parser != null) {

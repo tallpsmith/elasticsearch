@@ -19,14 +19,14 @@
 
 package org.elasticsearch.common.xcontent.json;
 
-import org.elasticsearch.common.Bytes;
-import org.elasticsearch.common.io.FastByteArrayOutputStream;
+import org.elasticsearch.common.CacheRecycler;
 import org.elasticsearch.common.io.Streams;
 import org.elasticsearch.common.jackson.JsonGenerator;
 import org.elasticsearch.common.xcontent.*;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 
 /**
  * @author kimchy (shay.banon)
@@ -201,7 +201,7 @@ public class JsonXContentGenerator implements XContentGenerator {
         generator.writeStartObject();
     }
 
-    @Override public void writeRawField(String fieldName, byte[] content, FastByteArrayOutputStream bos) throws IOException {
+    @Override public void writeRawField(String fieldName, byte[] content, OutputStream bos) throws IOException {
         generator.writeRaw(", \"");
         generator.writeRaw(fieldName);
         generator.writeRaw("\" : ");
@@ -209,12 +209,12 @@ public class JsonXContentGenerator implements XContentGenerator {
         bos.write(content);
     }
 
-    @Override public void writeRawField(String fieldName, InputStream content, FastByteArrayOutputStream bos) throws IOException {
+    @Override public void writeRawField(String fieldName, InputStream content, OutputStream bos) throws IOException {
         generator.writeRaw(", \"");
         generator.writeRaw(fieldName);
         generator.writeRaw("\" : ");
         flush();
-        byte[] bytes = Bytes.cachedBytes.get().get();
+        byte[] bytes = CacheRecycler.popBytes();
         Streams.copy(content, bos, bytes);
     }
 

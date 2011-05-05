@@ -26,8 +26,8 @@ import org.apache.lucene.queryParser.QueryParserSettings;
 import org.apache.lucene.search.Filter;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.Similarity;
+import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.collect.ImmutableMap;
-import org.elasticsearch.common.collect.Lists;
 import org.elasticsearch.common.collect.Maps;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.Index;
@@ -39,11 +39,8 @@ import org.elasticsearch.index.mapper.MapperService;
 import org.elasticsearch.index.query.QueryParsingException;
 import org.elasticsearch.index.similarity.SimilarityService;
 import org.elasticsearch.script.ScriptService;
-import org.elasticsearch.search.internal.ScopePhase;
 
-import javax.annotation.Nullable;
 import java.io.IOException;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -56,8 +53,6 @@ public class QueryParseContext {
     XContentIndexQueryParser indexQueryParser;
 
     private final Map<String, Filter> namedFilters = Maps.newHashMap();
-
-    private final List<ScopePhase> scopePhases = Lists.newArrayList();
 
     private final MapperQueryParser queryParser = new MapperQueryParser(this);
 
@@ -73,7 +68,6 @@ public class QueryParseContext {
     public void reset(XContentParser jp) {
         this.parser = jp;
         this.namedFilters.clear();
-        this.scopePhases.clear();
     }
 
     public XContentParser parser() {
@@ -104,22 +98,18 @@ public class QueryParseContext {
         return indexQueryParser.indexCache;
     }
 
-    public MapperQueryParser queryParser(QueryParserSettings settings) {
+    public MapperQueryParser singleQueryParser(QueryParserSettings settings) {
         queryParser.reset(settings);
         return queryParser;
     }
 
-    public MultiFieldMapperQueryParser queryParser(MultiFieldQueryParserSettings settings) {
+    public MultiFieldMapperQueryParser multiQueryParser(MultiFieldQueryParserSettings settings) {
         multiFieldQueryParser.reset(settings);
         return multiFieldQueryParser;
     }
 
     public Filter cacheFilter(Filter filter) {
         return indexQueryParser.indexCache.filter().cache(filter);
-    }
-
-    public Filter cacheWeakFilter(Filter filter) {
-        return indexQueryParser.indexCache.filter().weakCache(filter);
     }
 
     public void addNamedFilter(String name, Filter filter) {
@@ -131,19 +121,6 @@ public class QueryParseContext {
             return ImmutableMap.of();
         }
         return ImmutableMap.copyOf(namedFilters);
-    }
-
-    public void addScopePhase(ScopePhase scopePhase) {
-        scopePhases.add(scopePhase);
-    }
-
-    private static ScopePhase[] EMPTY_SCOPE_PHASES = new ScopePhase[0];
-
-    public ScopePhase[] copyScopePhases() {
-        if (scopePhases.isEmpty()) {
-            return EMPTY_SCOPE_PHASES;
-        }
-        return scopePhases.toArray(new ScopePhase[scopePhases.size()]);
     }
 
     public Query parseInnerQuery() throws IOException, QueryParsingException {
@@ -162,7 +139,7 @@ public class QueryParseContext {
 
         XContentQueryParser queryParser = indexQueryParser.queryParser(queryName);
         if (queryParser == null) {
-            throw new QueryParsingException(index, "No query parser registered for [" + queryName + "]");
+            throw new QueryParsingException(index, "No query registered for [" + queryName + "]");
         }
         Query result = queryParser.parse(this);
         if (parser.currentToken() == XContentParser.Token.END_OBJECT || parser.currentToken() == XContentParser.Token.END_ARRAY) {
@@ -181,14 +158,14 @@ public class QueryParseContext {
         }
         token = parser.nextToken();
         assert token == XContentParser.Token.FIELD_NAME;
-        String queryName = parser.currentName();
+        String filterName = parser.currentName();
         // move to the next START_OBJECT or START_ARRAY
         token = parser.nextToken();
         assert token == XContentParser.Token.START_OBJECT || token == XContentParser.Token.START_ARRAY;
 
-        XContentFilterParser filterParser = indexQueryParser.filterParser(queryName);
+        XContentFilterParser filterParser = indexQueryParser.filterParser(filterName);
         if (filterParser == null) {
-            throw new QueryParsingException(index, "No query parser registered for [" + queryName + "]");
+            throw new QueryParsingException(index, "No filter registered for [" + filterName + "]");
         }
         Filter result = filterParser.parse(this);
         if (parser.currentToken() == XContentParser.Token.END_OBJECT || parser.currentToken() == XContentParser.Token.END_ARRAY) {

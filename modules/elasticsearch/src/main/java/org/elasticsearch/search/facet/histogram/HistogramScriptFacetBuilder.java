@@ -39,6 +39,8 @@ public class HistogramScriptFacetBuilder extends AbstractFacetBuilder {
     private Map<String, Object> params;
     private long interval = -1;
     private HistogramFacet.ComparatorType comparatorType;
+    private Object from;
+    private Object to;
 
     public HistogramScriptFacetBuilder(String name) {
         super(name);
@@ -101,12 +103,22 @@ public class HistogramScriptFacetBuilder extends AbstractFacetBuilder {
         return this;
     }
 
+    /**
+     * Sets the bounds from and to for the facet. Both performs bounds check and includes only
+     * values within the bounds, and improves performance.
+     */
+    public HistogramScriptFacetBuilder bounds(Object from, Object to) {
+        this.from = from;
+        this.to = to;
+        return this;
+    }
+
     public HistogramScriptFacetBuilder facetFilter(XContentFilterBuilder filter) {
         this.facetFilter = filter;
         return this;
     }
 
-    @Override public void toXContent(XContentBuilder builder, Params params) throws IOException {
+    @Override public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         if (keyScript == null && keyFieldName == null) {
             throw new SearchSourceBuilderException("key_script or key_field must be set on histogram script facet for facet [" + name + "]");
         }
@@ -115,13 +127,19 @@ public class HistogramScriptFacetBuilder extends AbstractFacetBuilder {
         }
         builder.startObject(name);
 
-        builder.startObject(HistogramFacetCollectorParser.NAME);
+        builder.startObject(HistogramFacet.TYPE);
         if (keyFieldName != null) {
             builder.field("key_field", keyFieldName);
         } else if (keyScript != null) {
             builder.field("key_script", keyScript);
         }
         builder.field("value_script", valueScript);
+
+        if (from != null && to != null) {
+            builder.field("from", from);
+            builder.field("to", to);
+        }
+
         if (lang != null) {
             builder.field("lang", lang);
         }
@@ -139,5 +157,6 @@ public class HistogramScriptFacetBuilder extends AbstractFacetBuilder {
         addFilterFacetAndGlobal(builder, params);
 
         builder.endObject();
+        return builder;
     }
 }

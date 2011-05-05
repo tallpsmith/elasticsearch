@@ -22,6 +22,7 @@ package org.elasticsearch.monitor.os;
 import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.unit.TimeValue;
 
 /**
  * @author kimchy (shay.banon)
@@ -32,20 +33,31 @@ public class OsService extends AbstractComponent {
 
     private final OsInfo info;
 
+    private final TimeValue refreshInterval;
+
+    private OsStats cachedStats;
+
     @Inject public OsService(Settings settings, OsProbe probe) {
         super(settings);
         this.probe = probe;
 
-        this.info = probe.osInfo();
+        this.refreshInterval = componentSettings.getAsTime("refresh_interval", TimeValue.timeValueSeconds(5));
 
-        logger.trace("Using probe [{}]", probe);
+        this.info = probe.osInfo();
+        this.info.refreshInterval = refreshInterval.millis();
+        this.cachedStats = probe.osStats();
+
+        logger.debug("Using probe [{}] with refresh_interval [{}]", probe, refreshInterval);
     }
 
     public OsInfo info() {
         return this.info;
     }
 
-    public OsStats stats() {
-        return probe.osStats();
+    public synchronized OsStats stats() {
+        if ((System.currentTimeMillis() - cachedStats.timestamp()) > refreshInterval.millis()) {
+            cachedStats = probe.osStats();
+        }
+        return cachedStats;
     }
 }

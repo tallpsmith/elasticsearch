@@ -22,12 +22,10 @@ package org.elasticsearch.discovery.zen.publish;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.component.AbstractComponent;
-import org.elasticsearch.common.io.stream.StreamInput;
-import org.elasticsearch.common.io.stream.StreamOutput;
-import org.elasticsearch.common.io.stream.Streamable;
-import org.elasticsearch.common.io.stream.VoidStreamable;
+import org.elasticsearch.common.io.stream.*;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.discovery.zen.DiscoveryNodesProvider;
+import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.*;
 
 import java.io.IOException;
@@ -53,6 +51,7 @@ public class PublishClusterStateAction extends AbstractComponent {
         this.transportService = transportService;
         this.nodesProvider = nodesProvider;
         this.listener = listener;
+
         transportService.registerHandler(PublishClusterStateRequestHandler.ACTION, new PublishClusterStateRequestHandler());
     }
 
@@ -62,36 +61,56 @@ public class PublishClusterStateAction extends AbstractComponent {
 
     public void publish(ClusterState clusterState) {
         DiscoveryNode localNode = nodesProvider.nodes().localNode();
+
+        // serialize the cluster state here, so we won't do it several times per node
+        byte[] clusterStateInBytes;
+        try {
+            HandlesStreamOutput stream = CachedStreamOutput.cachedHandlesLzfBytes();
+            ClusterState.Builder.writeTo(clusterState, stream);
+            stream.flush();
+            BytesStreamOutput wrapped = ((BytesStreamOutput) ((LZFStreamOutput) stream.wrappedOut()).wrappedOut());
+            clusterStateInBytes = wrapped.copiedByteArray();
+        } catch (Exception e) {
+            logger.warn("failed to serialize cluster_state before publishing it to nodes", e);
+            return;
+        }
+
         for (final DiscoveryNode node : clusterState.nodes()) {
             if (node.equals(localNode)) {
                 // no need to send to our self
                 continue;
             }
-            transportService.sendRequest(node, PublishClusterStateRequestHandler.ACTION, new PublishClusterStateRequest(clusterState), new VoidTransportResponseHandler(false) {
-                @Override public void handleException(TransportException exp) {
-                    logger.debug("failed to send cluster state to [{}], should be detected as failed soon...", exp, node);
-                }
-            });
+            transportService.sendRequest(node, PublishClusterStateRequestHandler.ACTION,
+                    new PublishClusterStateRequest(clusterStateInBytes),
+                    TransportRequestOptions.options().withHighType().withCompress(false), // no need to compress, we already compressed the bytes
+
+                    new VoidTransportResponseHandler(ThreadPool.Names.SAME) {
+                        @Override public void handleException(TransportException exp) {
+                            logger.debug("failed to send cluster state to [{}], should be detected as failed soon...", exp, node);
+                        }
+                    });
         }
     }
 
     private class PublishClusterStateRequest implements Streamable {
 
-        private ClusterState clusterState;
+        private byte[] clusterStateInBytes;
 
         private PublishClusterStateRequest() {
         }
 
-        private PublishClusterStateRequest(ClusterState clusterState) {
-            this.clusterState = clusterState;
+        private PublishClusterStateRequest(byte[] clusterStateInBytes) {
+            this.clusterStateInBytes = clusterStateInBytes;
         }
 
         @Override public void readFrom(StreamInput in) throws IOException {
-            clusterState = ClusterState.Builder.readFrom(in, nodesProvider.nodes().localNode());
+            clusterStateInBytes = new byte[in.readVInt()];
+            in.readFully(clusterStateInBytes);
         }
 
         @Override public void writeTo(StreamOutput out) throws IOException {
-            ClusterState.Builder.writeTo(clusterState, out);
+            out.writeVInt(clusterStateInBytes.length);
+            out.writeBytes(clusterStateInBytes);
         }
     }
 
@@ -104,15 +123,14 @@ public class PublishClusterStateAction extends AbstractComponent {
         }
 
         @Override public void messageReceived(PublishClusterStateRequest request, TransportChannel channel) throws Exception {
-            listener.onNewClusterState(request.clusterState);
+            StreamInput in = CachedStreamInput.cachedHandlesLzf(new BytesStreamInput(request.clusterStateInBytes));
+            ClusterState clusterState = ClusterState.Builder.readFrom(in, nodesProvider.nodes().localNode());
+            listener.onNewClusterState(clusterState);
             channel.sendResponse(VoidStreamable.INSTANCE);
         }
 
-        /**
-         * No need to spawn, we add submit a new cluster state directly. This allows for faster application.
-         */
-        @Override public boolean spawn() {
-            return false;
+        @Override public String executor() {
+            return ThreadPool.Names.SAME;
         }
     }
 }

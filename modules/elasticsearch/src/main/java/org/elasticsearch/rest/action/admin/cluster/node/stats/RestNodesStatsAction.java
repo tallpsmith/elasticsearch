@@ -77,9 +77,6 @@ public class RestNodesStatsAction extends BaseRestHandler {
                         if (nodeStats.network() != null) {
                             nodeStats.network().toXContent(builder, request);
                         }
-                        if (nodeStats.threadPool() != null) {
-                            nodeStats.threadPool().toXContent(builder, request);
-                        }
                         if (nodeStats.transport() != null) {
                             nodeStats.transport().toXContent(builder, request);
                         }
@@ -89,7 +86,7 @@ public class RestNodesStatsAction extends BaseRestHandler {
                     builder.endObject();
 
                     builder.endObject();
-                    channel.sendResponse(new XContentRestResponse(request, RestResponse.Status.OK, builder));
+                    channel.sendResponse(new XContentRestResponse(request, RestStatus.OK, builder));
                 } catch (Exception e) {
                     onFailure(e);
                 }

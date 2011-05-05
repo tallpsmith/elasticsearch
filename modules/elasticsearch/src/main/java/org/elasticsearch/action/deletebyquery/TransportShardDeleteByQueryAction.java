@@ -48,6 +48,10 @@ public class TransportShardDeleteByQueryAction extends TransportShardReplication
         return true;
     }
 
+    @Override protected String executor() {
+        return ThreadPool.Names.INDEX;
+    }
+
     @Override protected ShardDeleteByQueryRequest newRequestInstance() {
         return new ShardDeleteByQueryRequest();
     }
@@ -64,10 +68,10 @@ public class TransportShardDeleteByQueryAction extends TransportShardReplication
         state.blocks().indexBlockedRaiseException(ClusterBlockLevel.WRITE, request.index());
     }
 
-    @Override protected ShardDeleteByQueryResponse shardOperationOnPrimary(ClusterState clusterState, ShardOperationRequest shardRequest) {
+    @Override protected PrimaryResponse<ShardDeleteByQueryResponse> shardOperationOnPrimary(ClusterState clusterState, ShardOperationRequest shardRequest) {
         ShardDeleteByQueryRequest request = shardRequest.request;
         indexShard(shardRequest).deleteByQuery(request.querySource(), request.queryParserName(), request.types());
-        return new ShardDeleteByQueryResponse();
+        return new PrimaryResponse<ShardDeleteByQueryResponse>(new ShardDeleteByQueryResponse(), null);
     }
 
     @Override protected void shardOperationOnReplica(ShardOperationRequest shardRequest) {

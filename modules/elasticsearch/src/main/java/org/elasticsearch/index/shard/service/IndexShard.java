@@ -19,35 +19,33 @@
 
 package org.elasticsearch.index.shard.service;
 
-import org.apache.lucene.index.Term;
 import org.elasticsearch.ElasticSearchException;
 import org.elasticsearch.cluster.routing.ShardRouting;
-import org.elasticsearch.common.component.CloseableComponent;
-import org.elasticsearch.common.unit.ByteSizeValue;
+import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.util.concurrent.ThreadSafe;
 import org.elasticsearch.index.engine.Engine;
 import org.elasticsearch.index.engine.EngineException;
 import org.elasticsearch.index.mapper.ParsedDocument;
 import org.elasticsearch.index.mapper.SourceToParse;
+import org.elasticsearch.index.refresh.RefreshStats;
 import org.elasticsearch.index.shard.IndexShardComponent;
 import org.elasticsearch.index.shard.IndexShardState;
-
-import javax.annotation.Nullable;
 
 /**
  * @author kimchy (shay.banon)
  */
 @ThreadSafe
-public interface IndexShard extends IndexShardComponent, CloseableComponent {
+public interface IndexShard extends IndexShardComponent {
+
+    void addListener(OperationListener listener);
+
+    void removeListener(OperationListener listener);
 
     ShardRouting routingEntry();
 
-    IndexShardState state();
+    RefreshStats refreshStats();
 
-    /**
-     * Returns the estimated flushable memory size. Returns <tt>null</tt> if not available.
-     */
-    ByteSizeValue estimateFlushableMemorySize() throws ElasticSearchException;
+    IndexShardState state();
 
     Engine.Create prepareCreate(SourceToParse source) throws ElasticSearchException;
 
@@ -57,13 +55,9 @@ public interface IndexShard extends IndexShardComponent, CloseableComponent {
 
     ParsedDocument index(Engine.Index index) throws ElasticSearchException;
 
-    Engine.Delete prepareDelete(String type, String id) throws ElasticSearchException;
+    Engine.Delete prepareDelete(String type, String id, long version) throws ElasticSearchException;
 
     void delete(Engine.Delete delete) throws ElasticSearchException;
-
-    void delete(Term uid) throws ElasticSearchException;
-
-    EngineException[] bulk(Engine.Bulk bulk) throws ElasticSearchException;
 
     void deleteByQuery(byte[] querySource, @Nullable String queryParserName, String... types) throws ElasticSearchException;
 

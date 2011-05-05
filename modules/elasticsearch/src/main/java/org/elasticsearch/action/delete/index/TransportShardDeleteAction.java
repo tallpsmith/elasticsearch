@@ -62,25 +62,51 @@ public class TransportShardDeleteAction extends TransportShardReplicationOperati
         return "indices/index/b_shard/delete";
     }
 
+    @Override protected String executor() {
+        return ThreadPool.Names.INDEX;
+    }
+
     @Override protected void checkBlock(ShardDeleteRequest request, ClusterState state) {
         state.blocks().indexBlockedRaiseException(ClusterBlockLevel.WRITE, request.index());
     }
 
-    @Override protected ShardDeleteResponse shardOperationOnPrimary(ClusterState clusterState, ShardOperationRequest shardRequest) {
+    @Override protected PrimaryResponse<ShardDeleteResponse> shardOperationOnPrimary(ClusterState clusterState, ShardOperationRequest shardRequest) {
         ShardDeleteRequest request = shardRequest.request;
         IndexShard indexShard = indexShard(shardRequest);
-        Engine.Delete delete = indexShard.prepareDelete(request.type(), request.id());
-        delete.refresh(request.refresh());
+        Engine.Delete delete = indexShard.prepareDelete(request.type(), request.id(), request.version())
+                .origin(Engine.Operation.Origin.PRIMARY);
         indexShard.delete(delete);
-        return new ShardDeleteResponse();
+        // update the version to happen on the replicas
+        request.version(delete.version());
+
+        if (request.refresh()) {
+            try {
+                indexShard.refresh(new Engine.Refresh(false));
+            } catch (Exception e) {
+                // ignore
+            }
+        }
+
+
+        ShardDeleteResponse response = new ShardDeleteResponse(delete.version(), delete.notFound());
+        return new PrimaryResponse<ShardDeleteResponse>(response, null);
     }
 
     @Override protected void shardOperationOnReplica(ShardOperationRequest shardRequest) {
         ShardDeleteRequest request = shardRequest.request;
         IndexShard indexShard = indexShard(shardRequest);
-        Engine.Delete delete = indexShard.prepareDelete(request.type(), request.id());
-        delete.refresh(request.refresh());
+        Engine.Delete delete = indexShard.prepareDelete(request.type(), request.id(), request.version())
+                .origin(Engine.Operation.Origin.REPLICA);
         indexShard.delete(delete);
+
+        if (request.refresh()) {
+            try {
+                indexShard.refresh(new Engine.Refresh(false));
+            } catch (Exception e) {
+                // ignore
+            }
+        }
+
     }
 
     @Override protected ShardIterator shards(ClusterState clusterState, ShardDeleteRequest request) {

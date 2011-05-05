@@ -101,9 +101,6 @@ public class RestNodesInfoAction extends BaseRestHandler {
                         if (nodeInfo.network() != null) {
                             nodeInfo.network().toXContent(builder, request);
                         }
-                        if (nodeInfo.threadPool() != null) {
-                            nodeInfo.threadPool().toXContent(builder, request);
-                        }
                         if (nodeInfo.transport() != null) {
                             nodeInfo.transport().toXContent(builder, request);
                         }
@@ -113,7 +110,7 @@ public class RestNodesInfoAction extends BaseRestHandler {
                     builder.endObject();
 
                     builder.endObject();
-                    channel.sendResponse(new XContentRestResponse(request, RestResponse.Status.OK, builder));
+                    channel.sendResponse(new XContentRestResponse(request, RestStatus.OK, builder));
                 } catch (Exception e) {
                     onFailure(e);
                 }

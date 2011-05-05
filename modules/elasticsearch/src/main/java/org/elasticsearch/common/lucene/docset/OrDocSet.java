@@ -37,22 +37,30 @@ public class OrDocSet extends DocSet {
     }
 
     @Override public boolean get(int doc) throws IOException {
-        // not cacheable, the reason is that by default, when constructing the filter, it is not cacheable,
-        // so if someone wants it to be cacheable, we might as well construct a cached version of the result
+        for (DocSet s : sets) {
+            if (s.get(doc)) return true;
+        }
         return false;
-//        for (DocSet s : sets) {
-//            if (s.get(doc)) return true;
-//        }
-//        return false;
     }
 
     @Override public boolean isCacheable() {
+        // not cacheable, the reason is that by default, when constructing the filter, it is not cacheable,
+        // so if someone wants it to be cacheable, we might as well construct a cached version of the result
+        return false;
+//        for (DocSet set : sets) {
+//            if (!set.isCacheable()) {
+//                return false;
+//            }
+//        }
+//        return true;
+    }
+
+    @Override public long sizeInBytes() {
+        long sizeInBytes = 0;
         for (DocSet set : sets) {
-            if (!set.isCacheable()) {
-                return false;
-            }
+            sizeInBytes += set.sizeInBytes();
         }
-        return true;
+        return sizeInBytes;
     }
 
     @Override public DocIdSetIterator iterator() throws IOException {
@@ -80,7 +88,10 @@ public class OrDocSet extends DocSet {
             _heap = new Item[sets.size()];
             _size = 0;
             for (DocIdSet set : sets) {
-                _heap[_size++] = new Item(set.iterator());
+                DocIdSetIterator iterator = set.iterator();
+                if (iterator != null) {
+                    _heap[_size++] = new Item(iterator);
+                }
             }
             if (_size == 0) _curDoc = DocIdSetIterator.NO_MORE_DOCS;
         }

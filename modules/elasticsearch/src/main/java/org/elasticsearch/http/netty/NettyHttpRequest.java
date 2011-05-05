@@ -19,7 +19,6 @@
 
 package org.elasticsearch.http.netty;
 
-import org.elasticsearch.common.netty.handler.codec.http.HttpHeaders;
 import org.elasticsearch.common.netty.handler.codec.http.HttpMethod;
 import org.elasticsearch.http.HttpRequest;
 import org.elasticsearch.rest.support.AbstractRestRequest;
@@ -28,7 +27,6 @@ import org.elasticsearch.rest.support.RestUtils;
 import java.nio.charset.Charset;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * @author kimchy (shay.banon)
@@ -39,7 +37,7 @@ public class NettyHttpRequest extends AbstractRestRequest implements HttpRequest
 
     private final Map<String, String> params;
 
-    private final String path;
+    private final String rawPath;
 
     private byte[] cachedData;
 
@@ -50,9 +48,9 @@ public class NettyHttpRequest extends AbstractRestRequest implements HttpRequest
         String uri = request.getUri();
         int pathEndPos = uri.indexOf('?');
         if (pathEndPos < 0) {
-            this.path = RestUtils.decodeComponent(uri);
+            this.rawPath = uri;
         } else {
-            this.path = RestUtils.decodeComponent(uri.substring(0, pathEndPos));
+            this.rawPath = uri.substring(0, pathEndPos);
             RestUtils.decodeQueryString(uri, pathEndPos + 1, params);
         }
     }
@@ -86,8 +84,8 @@ public class NettyHttpRequest extends AbstractRestRequest implements HttpRequest
         return request.getUri();
     }
 
-    @Override public String path() {
-        return path;
+    @Override public String rawPath() {
+        return rawPath;
     }
 
     @Override public Map<String, String> params() {
@@ -132,16 +130,8 @@ public class NettyHttpRequest extends AbstractRestRequest implements HttpRequest
         return request.getContent().toString(UTF8);
     }
 
-    @Override public Set<String> headerNames() {
-        return request.getHeaderNames();
-    }
-
     @Override public String header(String name) {
         return request.getHeader(name);
-    }
-
-    @Override public String cookie() {
-        return request.getHeader(HttpHeaders.Names.COOKIE);
     }
 
     @Override public boolean hasParam(String key) {

@@ -20,32 +20,60 @@
 package org.elasticsearch.index.cache;
 
 import org.apache.lucene.index.IndexReader;
+import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.cluster.ClusterChangedEvent;
+import org.elasticsearch.cluster.ClusterService;
+import org.elasticsearch.cluster.ClusterStateListener;
+import org.elasticsearch.common.Nullable;
+import org.elasticsearch.common.component.CloseableComponent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.AbstractIndexComponent;
 import org.elasticsearch.index.Index;
+import org.elasticsearch.index.cache.bloom.BloomCache;
 import org.elasticsearch.index.cache.field.data.FieldDataCache;
 import org.elasticsearch.index.cache.filter.FilterCache;
 import org.elasticsearch.index.cache.id.IdCache;
+import org.elasticsearch.index.cache.query.parser.QueryParserCache;
 import org.elasticsearch.index.settings.IndexSettings;
 
 /**
  * @author kimchy (shay.banon)
  */
-public class IndexCache extends AbstractIndexComponent {
+public class IndexCache extends AbstractIndexComponent implements CloseableComponent, ClusterStateListener {
 
     private final FilterCache filterCache;
 
     private final FieldDataCache fieldDataCache;
 
+    private final QueryParserCache queryParserCache;
+
     private final IdCache idCache;
 
+    private final BloomCache bloomCache;
+
+    private ClusterService clusterService;
+
     @Inject public IndexCache(Index index, @IndexSettings Settings indexSettings, FilterCache filterCache, FieldDataCache fieldDataCache,
-                              IdCache idCache) {
+                              QueryParserCache queryParserCache, IdCache idCache, BloomCache bloomCache) {
         super(index, indexSettings);
         this.filterCache = filterCache;
         this.fieldDataCache = fieldDataCache;
+        this.queryParserCache = queryParserCache;
         this.idCache = idCache;
+        this.bloomCache = bloomCache;
+    }
+
+    @Inject(optional = true)
+    public void setClusterService(@Nullable ClusterService clusterService) {
+        this.clusterService = clusterService;
+        if (clusterService != null) {
+            clusterService.add(this);
+        }
+    }
+
+    public CacheStats stats() {
+        return new CacheStats(fieldDataCache.evictions(), filterCache.evictions(), filterCache.memEvictions(), fieldDataCache.sizeInBytes(), filterCache.sizeInBytes(), filterCache.count(), bloomCache.sizeInBytes());
     }
 
     public FilterCache filter() {
@@ -60,21 +88,44 @@ public class IndexCache extends AbstractIndexComponent {
         return this.idCache;
     }
 
+    public BloomCache bloomCache() {
+        return this.bloomCache;
+    }
+
+    public QueryParserCache queryParserCache() {
+        return this.queryParserCache;
+    }
+
+    @Override public void close() throws ElasticSearchException {
+        filterCache.close();
+        fieldDataCache.close();
+        idCache.close();
+        queryParserCache.close();
+        bloomCache.close();
+        if (clusterService != null) {
+            clusterService.remove(this);
+        }
+    }
+
     public void clear(IndexReader reader) {
         filterCache.clear(reader);
         fieldDataCache.clear(reader);
         idCache.clear(reader);
+        bloomCache.clear(reader);
     }
 
     public void clear() {
         filterCache.clear();
         fieldDataCache.clear();
         idCache.clear();
+        queryParserCache.clear();
+        bloomCache.clear();
     }
 
-    public void clearUnreferenced() {
-        filterCache.clearUnreferenced();
-        fieldDataCache.clearUnreferenced();
-        idCache.clearUnreferenced();
+    @Override public void clusterChanged(ClusterChangedEvent event) {
+        // clear the query parser cache if the metadata (mappings) changed...
+        if (event.metaDataChanged()) {
+            queryParserCache.clear();
+        }
     }
 }

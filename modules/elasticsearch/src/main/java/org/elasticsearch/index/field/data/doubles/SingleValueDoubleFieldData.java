@@ -19,6 +19,7 @@
 
 package org.elasticsearch.index.field.data.doubles;
 
+import org.elasticsearch.common.RamUsage;
 import org.elasticsearch.common.thread.ThreadLocals;
 
 /**
@@ -40,6 +41,11 @@ public class SingleValueDoubleFieldData extends DoubleFieldData {
         this.ordinals = ordinals;
     }
 
+    @Override protected long computeSizeInBytes() {
+        return super.computeSizeInBytes() +
+                RamUsage.NUM_BYTES_INT * ordinals.length + RamUsage.NUM_BYTES_ARRAY_HEADER;
+    }
+
     @Override public boolean multiValued() {
         return false;
     }
@@ -51,6 +57,7 @@ public class SingleValueDoubleFieldData extends DoubleFieldData {
     @Override public void forEachValueInDoc(int docId, StringValueInDocProc proc) {
         int loc = ordinals[docId];
         if (loc == 0) {
+            proc.onMissing(docId);
             return;
         }
         proc.onValue(docId, Double.toString(values[loc]));
@@ -62,6 +69,45 @@ public class SingleValueDoubleFieldData extends DoubleFieldData {
             return;
         }
         proc.onValue(docId, values[loc]);
+    }
+
+    @Override public void forEachValueInDoc(int docId, LongValueInDocProc proc) {
+        int loc = ordinals[docId];
+        if (loc == 0) {
+            return;
+        }
+        proc.onValue(docId, (long) values[loc]);
+    }
+
+    @Override public void forEachValueInDoc(int docId, MissingDoubleValueInDocProc proc) {
+        int loc = ordinals[docId];
+        if (loc == 0) {
+            proc.onMissing(docId);
+            return;
+        }
+        proc.onValue(docId, values[loc]);
+    }
+
+    @Override public void forEachValueInDoc(int docId, MissingLongValueInDocProc proc) {
+        int loc = ordinals[docId];
+        if (loc == 0) {
+            proc.onMissing(docId);
+            return;
+        }
+        proc.onValue(docId, (long) values[loc]);
+    }
+
+    @Override public void forEachValueInDoc(int docId, ValueInDocProc proc) {
+        int loc = ordinals[docId];
+        if (loc == 0) {
+            proc.onMissing(docId);
+            return;
+        }
+        proc.onValue(docId, values[loc]);
+    }
+
+    @Override public void forEachOrdinalInDoc(int docId, OrdinalInDocProc proc) {
+        proc.onOrdinal(docId, ordinals[docId]);
     }
 
     @Override public double[] doubleValues(int docId) {

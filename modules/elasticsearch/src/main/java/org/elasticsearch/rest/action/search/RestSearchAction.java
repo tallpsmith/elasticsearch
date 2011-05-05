@@ -25,6 +25,7 @@ import org.elasticsearch.action.search.SearchOperationThreading;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.client.Client;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
@@ -41,7 +42,7 @@ import java.util.regex.Pattern;
 
 import static org.elasticsearch.common.unit.TimeValue.*;
 import static org.elasticsearch.rest.RestRequest.Method.*;
-import static org.elasticsearch.rest.RestResponse.Status.*;
+import static org.elasticsearch.rest.RestStatus.*;
 import static org.elasticsearch.rest.action.support.RestXContentBuilder.*;
 
 /**
@@ -80,6 +81,9 @@ public class RestSearchAction extends BaseRestHandler {
             }
             searchRequest.operationThreading(operationThreading);
         } catch (Exception e) {
+            if (logger.isDebugEnabled()) {
+                logger.debug("failed to parse search request parameters", e);
+            }
             try {
                 XContentBuilder builder = restContentBuilder(request);
                 channel.sendResponse(new XContentRestResponse(request, BAD_REQUEST, builder.startObject().field("error", e.getMessage()).endObject()));
@@ -140,6 +144,7 @@ public class RestSearchAction extends BaseRestHandler {
         searchRequest.types(RestActions.splitTypes(request.param("type")));
         searchRequest.queryHint(request.param("query_hint"));
         searchRequest.routing(request.param("routing"));
+        searchRequest.preference(request.param("preference"));
 
         return searchRequest;
     }
@@ -176,13 +181,18 @@ public class RestSearchAction extends BaseRestHandler {
 
         searchSourceBuilder.queryParserName(request.param("query_parser_name"));
         searchSourceBuilder.explain(request.paramAsBoolean("explain", null));
+        searchSourceBuilder.version(request.paramAsBoolean("version", null));
 
         String sField = request.param("fields");
         if (sField != null) {
-            String[] sFields = fieldsPattern.split(sField);
-            if (sFields != null) {
-                for (String field : sFields) {
-                    searchSourceBuilder.field(field);
+            if (!Strings.hasText(sField)) {
+                searchSourceBuilder.noFields();
+            } else {
+                String[] sFields = fieldsPattern.split(sField);
+                if (sFields != null) {
+                    for (String field : sFields) {
+                        searchSourceBuilder.field(field);
+                    }
                 }
             }
         }

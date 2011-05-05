@@ -127,7 +127,7 @@ public class IndexShardGatewayService extends AbstractIndexShardComponent implem
             return;
         }
         try {
-            indexShard.recovering();
+            indexShard.recovering("from gateway");
         } catch (IllegalIndexShardStateException e) {
             // that's fine, since we might be called concurrently, just ignore this, we are already recovering
             listener.onIgnoreRecovery("already in recovering process, " + e.getMessage());
@@ -150,7 +150,7 @@ public class IndexShardGatewayService extends AbstractIndexShardComponent implem
 
                     // start the shard if the gateway has not started it already
                     if (indexShard.state() != IndexShardState.STARTED) {
-                        indexShard.start();
+                        indexShard.start("post recovery from gateway");
                     }
                     // refresh the shard
                     indexShard.refresh(new Engine.Refresh(false));
@@ -270,7 +270,7 @@ public class IndexShardGatewayService extends AbstractIndexShardComponent implem
     }
 
     public void snapshotOnClose() {
-        if (snapshotOnClose) {
+        if (shardGateway.requiresSnapshot() && snapshotOnClose) {
             try {
                 snapshot("shutdown");
             } catch (Exception e) {
@@ -296,6 +296,9 @@ public class IndexShardGatewayService extends AbstractIndexShardComponent implem
     }
 
     private synchronized void scheduleSnapshotIfNeeded() {
+        if (!shardGateway.requiresSnapshot()) {
+            return;
+        }
         if (!shardGateway.requiresSnapshotScheduling()) {
             return;
         }
@@ -316,7 +319,7 @@ public class IndexShardGatewayService extends AbstractIndexShardComponent implem
             if (logger.isDebugEnabled()) {
                 logger.debug("scheduling snapshot every [{}]", snapshotInterval);
             }
-            snapshotScheduleFuture = threadPool.scheduleWithFixedDelay(new SnapshotRunnable(), snapshotInterval);
+            snapshotScheduleFuture = threadPool.schedule(snapshotInterval, ThreadPool.Names.SNAPSHOT, new SnapshotRunnable());
         }
     }
 
@@ -324,11 +327,15 @@ public class IndexShardGatewayService extends AbstractIndexShardComponent implem
         @Override public void run() {
             try {
                 snapshot("scheduled");
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 if (indexShard.state() == IndexShardState.CLOSED) {
                     return;
                 }
                 logger.warn("failed to snapshot (scheduled)", e);
+            }
+            // schedule it again
+            if (indexShard.state() != IndexShardState.CLOSED) {
+                snapshotScheduleFuture = threadPool.schedule(snapshotInterval, ThreadPool.Names.SNAPSHOT, this);
             }
         }
     }

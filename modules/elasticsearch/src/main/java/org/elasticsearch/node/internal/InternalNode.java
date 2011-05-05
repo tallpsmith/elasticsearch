@@ -30,6 +30,7 @@ import org.elasticsearch.cluster.ClusterModule;
 import org.elasticsearch.cluster.ClusterNameModule;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.routing.RoutingService;
+import org.elasticsearch.common.CacheRecycler;
 import org.elasticsearch.common.StopWatch;
 import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.common.component.Lifecycle;
@@ -37,6 +38,7 @@ import org.elasticsearch.common.component.LifecycleComponent;
 import org.elasticsearch.common.inject.Injector;
 import org.elasticsearch.common.inject.Injectors;
 import org.elasticsearch.common.inject.ModulesBuilder;
+import org.elasticsearch.common.io.CachedStreams;
 import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.network.NetworkModule;
@@ -57,6 +59,7 @@ import org.elasticsearch.http.HttpServerModule;
 import org.elasticsearch.indices.IndicesModule;
 import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.indices.cluster.IndicesClusterStateService;
+import org.elasticsearch.indices.memory.IndexingMemoryBufferController;
 import org.elasticsearch.jmx.JmxModule;
 import org.elasticsearch.jmx.JmxService;
 import org.elasticsearch.monitor.MonitorModule;
@@ -77,8 +80,6 @@ import org.elasticsearch.search.SearchModule;
 import org.elasticsearch.search.SearchService;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.threadpool.ThreadPoolModule;
-import org.elasticsearch.timer.TimerModule;
-import org.elasticsearch.timer.TimerService;
 import org.elasticsearch.transport.TransportModule;
 import org.elasticsearch.transport.TransportService;
 
@@ -123,13 +124,12 @@ public final class InternalNode implements Node {
         modules.add(new NodeModule(this));
         modules.add(new NetworkModule());
         modules.add(new NodeCacheModule(settings));
-        modules.add(new ScriptModule());
+        modules.add(new ScriptModule(settings));
         modules.add(new JmxModule(settings));
         modules.add(new EnvironmentModule(environment));
         modules.add(new NodeEnvironmentModule());
         modules.add(new ClusterNameModule(settings));
         modules.add(new ThreadPoolModule(settings));
-        modules.add(new TimerModule());
         modules.add(new DiscoveryModule(settings));
         modules.add(new ClusterModule(settings));
         modules.add(new RestModule(settings));
@@ -174,6 +174,7 @@ public final class InternalNode implements Node {
         }
 
         injector.getInstance(IndicesService.class).start();
+        injector.getInstance(IndexingMemoryBufferController.class).start();
         injector.getInstance(IndicesClusterStateService.class).start();
         injector.getInstance(RiversManager.class).start();
         injector.getInstance(ClusterService.class).start();
@@ -208,6 +209,17 @@ public final class InternalNode implements Node {
         if (settings.getAsBoolean("http.enabled", true)) {
             injector.getInstance(HttpServer.class).stop();
         }
+        // stop any changes happening as a result of cluster state changes
+        injector.getInstance(IndicesClusterStateService.class).stop();
+        // we close indices first, so operations won't be allowed on it
+        injector.getInstance(IndexingMemoryBufferController.class).stop();
+        injector.getInstance(IndicesService.class).stop();
+        // sleep a bit to let operations finish with indices service
+//        try {
+//            Thread.sleep(500);
+//        } catch (InterruptedException e) {
+//            // ignore
+//        }
         injector.getInstance(RoutingService.class).stop();
         injector.getInstance(ClusterService.class).stop();
         injector.getInstance(DiscoveryService.class).stop();
@@ -215,8 +227,6 @@ public final class InternalNode implements Node {
         injector.getInstance(GatewayService.class).stop();
         injector.getInstance(SearchService.class).stop();
         injector.getInstance(RiversManager.class).stop();
-        injector.getInstance(IndicesClusterStateService.class).stop();
-        injector.getInstance(IndicesService.class).stop();
         injector.getInstance(RestController.class).stop();
         injector.getInstance(TransportService.class).stop();
         injector.getInstance(JmxService.class).close();
@@ -248,6 +258,11 @@ public final class InternalNode implements Node {
         }
         stopWatch.stop().start("client");
         injector.getInstance(Client.class).close();
+        stopWatch.stop().start("indices_cluster");
+        injector.getInstance(IndicesClusterStateService.class).close();
+        stopWatch.stop().start("indices");
+        injector.getInstance(IndexingMemoryBufferController.class).close();
+        injector.getInstance(IndicesService.class).close();
         stopWatch.stop().start("routing");
         injector.getInstance(RoutingService.class).close();
         stopWatch.stop().start("cluster");
@@ -262,10 +277,6 @@ public final class InternalNode implements Node {
         injector.getInstance(SearchService.class).close();
         stopWatch.stop().start("indexers");
         injector.getInstance(RiversManager.class).close();
-        stopWatch.stop().start("indices_cluster");
-        injector.getInstance(IndicesClusterStateService.class).close();
-        stopWatch.stop().start("indices");
-        injector.getInstance(IndicesService.class).close();
         stopWatch.stop().start("rest");
         injector.getInstance(RestController.class).close();
         stopWatch.stop().start("transport");
@@ -282,8 +293,6 @@ public final class InternalNode implements Node {
         stopWatch.stop().start("script");
         injector.getInstance(ScriptService.class).close();
 
-        stopWatch.stop().start("timer");
-        injector.getInstance(TimerService.class).close();
         stopWatch.stop().start("thread_pool");
         injector.getInstance(ThreadPool.class).shutdown();
         try {
@@ -299,6 +308,8 @@ public final class InternalNode implements Node {
         }
         stopWatch.stop();
 
+        CacheRecycler.clear();
+        CachedStreams.clear();
         ThreadLocals.clearReferencesThreadLocals();
 
         if (logger.isTraceEnabled()) {

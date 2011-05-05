@@ -23,6 +23,7 @@ import org.apache.lucene.document.Field;
 import org.apache.lucene.document.Fieldable;
 import org.apache.lucene.index.Term;
 import org.elasticsearch.common.lucene.Lucene;
+import org.elasticsearch.common.lucene.uid.UidField;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.index.mapper.MapperParsingException;
 import org.elasticsearch.index.mapper.MergeMappingException;
@@ -41,7 +42,7 @@ public class UidFieldMapper extends AbstractFieldMapper<Uid> implements org.elas
         public static final String NAME = org.elasticsearch.index.mapper.UidFieldMapper.NAME;
         public static final Field.Index INDEX = Field.Index.NOT_ANALYZED;
         public static final boolean OMIT_NORMS = true;
-        public static final boolean OMIT_TERM_FREQ_AND_POSITIONS = true;
+        public static final boolean OMIT_TERM_FREQ_AND_POSITIONS = false; // we store payload
     }
 
     public static class Builder extends XContentMapper.Builder<Builder, UidFieldMapper> {
@@ -58,6 +59,12 @@ public class UidFieldMapper extends AbstractFieldMapper<Uid> implements org.elas
         }
     }
 
+    private ThreadLocal<UidField> fieldCache = new ThreadLocal<UidField>() {
+        @Override protected UidField initialValue() {
+            return new UidField(names().indexName(), "", 0);
+        }
+    };
+
     protected UidFieldMapper() {
         this(Defaults.NAME);
     }
@@ -71,12 +78,17 @@ public class UidFieldMapper extends AbstractFieldMapper<Uid> implements org.elas
                 Defaults.OMIT_NORMS, Defaults.OMIT_TERM_FREQ_AND_POSITIONS, Lucene.KEYWORD_ANALYZER, Lucene.KEYWORD_ANALYZER);
     }
 
-    @Override protected Field parseCreateField(ParseContext context) throws IOException {
+    @Override protected Fieldable parseCreateField(ParseContext context) throws IOException {
         if (context.id() == null) {
             throw new MapperParsingException("No id found while parsing the content source");
         }
         context.uid(Uid.createUid(context.stringBuilder(), context.type(), context.id()));
-        return new Field(names.indexName(), context.uid(), store, index);
+        // so, caching uid stream and field is fine
+        // since we don't do any mapping parsing without immediate indexing
+        // and, when percolating, we don't index the uid
+        UidField field = fieldCache.get();
+        field.setUid(context.uid());
+        return field; // version get updated by the engine
     }
 
     @Override public Uid value(Fieldable field) {
@@ -103,12 +115,17 @@ public class UidFieldMapper extends AbstractFieldMapper<Uid> implements org.elas
         return new Term(names.indexName(), uid);
     }
 
+    @Override public void close() {
+        fieldCache.remove();
+    }
+
     @Override protected String contentType() {
         return CONTENT_TYPE;
     }
 
-    @Override public void toXContent(XContentBuilder builder, Params params) throws IOException {
+    @Override public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         // for now, don't output it at all
+        return builder;
     }
 
     @Override public void merge(XContentMapper mergeWith, MergeContext mergeContext) throws MergeMappingException {

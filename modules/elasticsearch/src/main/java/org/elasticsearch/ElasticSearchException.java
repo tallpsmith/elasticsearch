@@ -19,6 +19,8 @@
 
 package org.elasticsearch;
 
+import org.elasticsearch.rest.RestStatus;
+
 /**
  * A base class for all elasticsearch exceptions.
  *
@@ -44,6 +46,28 @@ public class ElasticSearchException extends RuntimeException {
      */
     public ElasticSearchException(String msg, Throwable cause) {
         super(msg, cause);
+    }
+
+    /**
+     * Returns the rest status code associated with this exception.
+     */
+    public RestStatus status() {
+        ElasticSearchException current = this;
+        while (current instanceof ElasticSearchWrapperException) {
+            if (getCause() == null) {
+                break;
+            }
+            if (getCause() instanceof ElasticSearchException) {
+                current = (ElasticSearchException) getCause();
+            } else {
+                break;
+            }
+        }
+        if (current == this) {
+            return RestStatus.INTERNAL_SERVER_ERROR;
+        } else {
+            return current.status();
+        }
     }
 
     /**
@@ -77,10 +101,10 @@ public class ElasticSearchException extends RuntimeException {
 
 
     /**
-     * Retrieve the innermost cause of this exception, if any.
+     * Retrieve the innermost cause of this exception, if none, returns the current exception.
      */
     public Throwable getRootCause() {
-        Throwable rootCause = null;
+        Throwable rootCause = this;
         Throwable cause = getCause();
         while (cause != null && cause != rootCause) {
             rootCause = cause;

@@ -22,6 +22,7 @@ package org.elasticsearch.monitor.network;
 import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.unit.TimeValue;
 
 import java.net.InetAddress;
 import java.net.NetworkInterface;
@@ -36,11 +37,21 @@ public class NetworkService extends AbstractComponent {
 
     private final NetworkInfo info;
 
+    private final TimeValue refreshInterval;
+
+    private NetworkStats cachedStats;
+
     @Inject public NetworkService(Settings settings, NetworkProbe probe) {
         super(settings);
         this.probe = probe;
 
+        this.refreshInterval = componentSettings.getAsTime("refresh_interval", TimeValue.timeValueSeconds(5));
+
+        logger.debug("Using probe [{}] with refresh_interval [{}]", probe, refreshInterval);
+
         this.info = probe.networkInfo();
+        this.info.refreshInterval = refreshInterval.millis();
+        this.cachedStats = probe.networkStats();
 
         if (logger.isDebugEnabled()) {
             StringBuilder netDebug = new StringBuilder("net_info");
@@ -77,8 +88,11 @@ public class NetworkService extends AbstractComponent {
         return this.info;
     }
 
-    public NetworkStats stats() {
-        return probe.networkStats();
+    public synchronized NetworkStats stats() {
+        if ((System.currentTimeMillis() - cachedStats.timestamp()) > refreshInterval.millis()) {
+            cachedStats = probe.networkStats();
+        }
+        return cachedStats;
     }
 
     public String ifconfig() {

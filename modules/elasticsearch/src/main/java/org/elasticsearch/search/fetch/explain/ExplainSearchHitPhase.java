@@ -19,14 +19,11 @@
 
 package org.elasticsearch.search.fetch.explain;
 
-import org.apache.lucene.index.IndexReader;
 import org.elasticsearch.ElasticSearchException;
 import org.elasticsearch.common.collect.ImmutableMap;
-import org.elasticsearch.index.mapper.Uid;
 import org.elasticsearch.search.SearchParseElement;
 import org.elasticsearch.search.fetch.FetchPhaseExecutionException;
 import org.elasticsearch.search.fetch.SearchHitPhase;
-import org.elasticsearch.search.internal.InternalSearchHit;
 import org.elasticsearch.search.internal.SearchContext;
 
 import java.io.IOException;
@@ -45,12 +42,12 @@ public class ExplainSearchHitPhase implements SearchHitPhase {
         return context.explain();
     }
 
-    @Override public void execute(SearchContext context, InternalSearchHit hit, Uid uid, IndexReader reader, int docId) throws ElasticSearchException {
+    @Override public void execute(SearchContext context, HitContext hitContext) throws ElasticSearchException {
         try {
             // we use the top level doc id, since we work with the top level searcher
-            hit.explanation(context.searcher().explain(context.query(), hit.docId()));
+            hitContext.hit().explanation(context.searcher().explain(context.query(), hitContext.hit().docId()));
         } catch (IOException e) {
-            throw new FetchPhaseExecutionException(context, "Failed to explain doc [" + docId + "]", e);
+            throw new FetchPhaseExecutionException(context, "Failed to explain doc [" + hitContext.hit().type() + "#" + hitContext.hit().id() + "]", e);
         }
     }
 }

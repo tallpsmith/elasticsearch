@@ -20,14 +20,13 @@
 package org.elasticsearch.search.facet.statistical;
 
 import org.apache.lucene.index.IndexReader;
-import org.elasticsearch.common.Strings;
 import org.elasticsearch.index.cache.field.data.FieldDataCache;
 import org.elasticsearch.index.field.data.FieldDataType;
 import org.elasticsearch.index.field.data.NumericFieldData;
 import org.elasticsearch.index.mapper.FieldMapper;
+import org.elasticsearch.search.facet.AbstractFacetCollector;
 import org.elasticsearch.search.facet.Facet;
 import org.elasticsearch.search.facet.FacetPhaseExecutionException;
-import org.elasticsearch.search.facet.support.AbstractFacetCollector;
 import org.elasticsearch.search.internal.SearchContext;
 
 import java.io.IOException;
@@ -36,8 +35,6 @@ import java.io.IOException;
  * @author kimchy (shay.banon)
  */
 public class StatisticalFieldsFacetCollector extends AbstractFacetCollector {
-
-    private final String[] fieldsNames;
 
     private final String[] indexFieldsNames;
 
@@ -51,7 +48,6 @@ public class StatisticalFieldsFacetCollector extends AbstractFacetCollector {
 
     public StatisticalFieldsFacetCollector(String facetName, String[] fieldsNames, SearchContext context) {
         super(facetName);
-        this.fieldsNames = fieldsNames;
         this.fieldDataCache = context.fieldDataCache();
 
         fieldsDataType = new FieldDataType[fieldsNames.length];
@@ -76,37 +72,43 @@ public class StatisticalFieldsFacetCollector extends AbstractFacetCollector {
     }
 
     @Override protected void doSetNextReader(IndexReader reader, int docBase) throws IOException {
-        for (int i = 0; i < fieldsNames.length; i++) {
+        for (int i = 0; i < indexFieldsNames.length; i++) {
             fieldsData[i] = (NumericFieldData) fieldDataCache.cache(fieldsDataType[i], reader, indexFieldsNames[i]);
         }
     }
 
     @Override public Facet facet() {
-        return new InternalStatisticalFacet(facetName, Strings.arrayToCommaDelimitedString(fieldsNames), statsProc.min(), statsProc.max(), statsProc.total(), statsProc.sumOfSquares(), statsProc.count());
+        return new InternalStatisticalFacet(facetName, statsProc.min(), statsProc.max(), statsProc.total(), statsProc.sumOfSquares(), statsProc.count());
     }
 
-    public static class StatsProc implements NumericFieldData.DoubleValueInDocProc {
+    public static class StatsProc implements NumericFieldData.MissingDoubleValueInDocProc {
 
-        private double min = Double.NaN;
+        double min = Double.POSITIVE_INFINITY;
 
-        private double max = Double.NaN;
+        double max = Double.NEGATIVE_INFINITY;
 
-        private double total = 0;
+        double total = 0;
 
-        private double sumOfSquares = 0.0;
+        double sumOfSquares = 0.0;
 
-        private long count;
+        long count;
+
+        int missing;
 
         @Override public void onValue(int docId, double value) {
-            if (value < min || Double.isNaN(min)) {
+            if (value < min) {
                 min = value;
             }
-            if (value > max || Double.isNaN(max)) {
+            if (value > max) {
                 max = value;
             }
             sumOfSquares += value * value;
             total += value;
             count++;
+        }
+
+        @Override public void onMissing(int docId) {
+            missing++;
         }
 
         public final double min() {

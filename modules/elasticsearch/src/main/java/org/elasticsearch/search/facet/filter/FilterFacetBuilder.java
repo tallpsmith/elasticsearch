@@ -63,16 +63,17 @@ public class FilterFacetBuilder extends AbstractFacetBuilder {
         return this;
     }
 
-    @Override public void toXContent(XContentBuilder builder, Params params) throws IOException {
+    @Override public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         if (filter == null) {
             throw new SearchSourceBuilderException("filter must be set on filter facet for facet [" + name + "]");
         }
         builder.startObject(name);
-        builder.field(FilterFacetCollectorParser.NAME);
+        builder.field(FilterFacet.TYPE);
         filter.toXContent(builder, params);
 
         addFilterFacetAndGlobal(builder, params);
 
         builder.endObject();
+        return builder;
     }
 }

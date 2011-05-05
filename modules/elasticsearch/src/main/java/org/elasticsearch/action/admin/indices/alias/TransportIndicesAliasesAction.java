@@ -24,14 +24,17 @@ import org.elasticsearch.action.TransportActions;
 import org.elasticsearch.action.support.master.TransportMasterNodeOperationAction;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.ClusterState;
+import org.elasticsearch.cluster.block.ClusterBlockException;
 import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.cluster.metadata.AliasAction;
 import org.elasticsearch.cluster.metadata.MetaDataIndexAliasesService;
+import org.elasticsearch.common.collect.Sets;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -48,6 +51,10 @@ public class TransportIndicesAliasesAction extends TransportMasterNodeOperationA
         this.indexAliasesService = indexAliasesService;
     }
 
+    @Override protected String executor() {
+        return ThreadPool.Names.CACHED;
+    }
+
     @Override protected String transportAction() {
         return TransportActions.Admin.Indices.ALIASES;
     }
@@ -60,10 +67,12 @@ public class TransportIndicesAliasesAction extends TransportMasterNodeOperationA
         return new IndicesAliasesResponse();
     }
 
-    @Override protected void checkBlock(IndicesAliasesRequest request, ClusterState state) {
+    @Override protected ClusterBlockException checkBlock(IndicesAliasesRequest request, ClusterState state) {
+        Set<String> indices = Sets.newHashSet();
         for (AliasAction aliasAction : request.aliasActions()) {
-            state.blocks().indexBlockedRaiseException(ClusterBlockLevel.METADATA, aliasAction.index());
+            indices.add(aliasAction.index());
         }
+        return state.blocks().indicesBlockedException(ClusterBlockLevel.METADATA, indices.toArray(new String[indices.size()]));
     }
 
     @Override protected IndicesAliasesResponse masterOperation(IndicesAliasesRequest request, ClusterState state) throws ElasticSearchException {

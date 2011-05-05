@@ -33,6 +33,8 @@ import java.io.Serializable;
  */
 public class ProcessInfo implements Streamable, Serializable, ToXContent {
 
+    long refreshInterval;
+
     private long id;
 
     ProcessInfo() {
@@ -41,6 +43,14 @@ public class ProcessInfo implements Streamable, Serializable, ToXContent {
 
     public ProcessInfo(long id) {
         this.id = id;
+    }
+
+    public long refreshInterval() {
+        return this.refreshInterval;
+    }
+
+    public long getRefreshInterval() {
+        return this.refreshInterval;
     }
 
     /**
@@ -57,10 +67,12 @@ public class ProcessInfo implements Streamable, Serializable, ToXContent {
         return id();
     }
 
-    @Override public void toXContent(XContentBuilder builder, Params params) throws IOException {
+    @Override public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject("process");
+        builder.field("refresh_interval", refreshInterval);
         builder.field("id", id);
         builder.endObject();
+        return builder;
     }
 
     public static ProcessInfo readProcessInfo(StreamInput in) throws IOException {
@@ -70,10 +82,12 @@ public class ProcessInfo implements Streamable, Serializable, ToXContent {
     }
 
     @Override public void readFrom(StreamInput in) throws IOException {
+        refreshInterval = in.readLong();
         id = in.readLong();
     }
 
     @Override public void writeTo(StreamOutput out) throws IOException {
+        out.writeLong(refreshInterval);
         out.writeLong(id);
     }
 }

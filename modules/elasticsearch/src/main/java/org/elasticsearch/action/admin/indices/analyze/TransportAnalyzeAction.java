@@ -21,9 +21,9 @@ package org.elasticsearch.action.admin.indices.analyze;
 
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.TokenStream;
+import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.analysis.tokenattributes.OffsetAttribute;
 import org.apache.lucene.analysis.tokenattributes.PositionIncrementAttribute;
-import org.apache.lucene.analysis.tokenattributes.TermAttribute;
 import org.apache.lucene.analysis.tokenattributes.TypeAttribute;
 import org.elasticsearch.ElasticSearchException;
 import org.elasticsearch.ElasticSearchIllegalArgumentException;
@@ -57,6 +57,10 @@ public class TransportAnalyzeAction extends TransportSingleCustomOperationAction
         this.indicesService = indicesService;
     }
 
+    @Override protected String executor() {
+        return ThreadPool.Names.CACHED;
+    }
+
     @Override protected AnalyzeRequest newRequest() {
         return new AnalyzeRequest();
     }
@@ -75,7 +79,7 @@ public class TransportAnalyzeAction extends TransportSingleCustomOperationAction
 
     @Override protected ShardsIterator shards(ClusterState clusterState, AnalyzeRequest request) {
         request.index(clusterState.metaData().concreteIndex(request.index()));
-        return clusterState.routingTable().index(request.index()).allShardsIt();
+        return clusterState.routingTable().index(request.index()).randomAllShardsIt();
     }
 
     @Override protected AnalyzeResponse shardOperation(AnalyzeRequest request, int shardId) throws ElasticSearchException {
@@ -96,7 +100,7 @@ public class TransportAnalyzeAction extends TransportSingleCustomOperationAction
         try {
             stream = analyzer.reusableTokenStream(field, new FastStringReader(request.text()));
             stream.reset();
-            TermAttribute term = stream.addAttribute(TermAttribute.class);
+            CharTermAttribute term = stream.addAttribute(CharTermAttribute.class);
             PositionIncrementAttribute posIncr = stream.addAttribute(PositionIncrementAttribute.class);
             OffsetAttribute offset = stream.addAttribute(OffsetAttribute.class);
             TypeAttribute type = stream.addAttribute(TypeAttribute.class);
@@ -107,7 +111,7 @@ public class TransportAnalyzeAction extends TransportSingleCustomOperationAction
                 if (increment > 0) {
                     position = position + increment;
                 }
-                tokens.add(new AnalyzeResponse.AnalyzeToken(term.term(), position, offset.startOffset(), offset.endOffset(), type.type()));
+                tokens.add(new AnalyzeResponse.AnalyzeToken(term.toString(), position, offset.startOffset(), offset.endOffset(), type.type()));
             }
             stream.end();
         } catch (IOException e) {

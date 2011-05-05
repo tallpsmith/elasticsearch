@@ -23,6 +23,7 @@ import org.elasticsearch.ElasticSearchParseException;
 import org.elasticsearch.action.ActionResponse;
 import org.elasticsearch.common.Unicode;
 import org.elasticsearch.common.collect.ImmutableMap;
+import org.elasticsearch.common.compress.lzf.LZF;
 import org.elasticsearch.common.compress.lzf.LZFDecoder;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
@@ -53,6 +54,8 @@ public class GetResponse implements ActionResponse, Streamable, Iterable<GetFiel
 
     private String id;
 
+    private long version;
+
     private boolean exists;
 
     private Map<String, GetField> fields;
@@ -64,10 +67,11 @@ public class GetResponse implements ActionResponse, Streamable, Iterable<GetFiel
     GetResponse() {
     }
 
-    GetResponse(String index, String type, String id, boolean exists, byte[] source, Map<String, GetField> fields) {
+    GetResponse(String index, String type, String id, long version, boolean exists, byte[] source, Map<String, GetField> fields) {
         this.index = index;
         this.type = type;
         this.id = id;
+        this.version = version;
         this.exists = exists;
         this.source = source;
         this.fields = fields;
@@ -133,13 +137,27 @@ public class GetResponse implements ActionResponse, Streamable, Iterable<GetFiel
     }
 
     /**
+     * The version of the doc.
+     */
+    public long version() {
+        return this.version;
+    }
+
+    /**
+     * The version of the doc.
+     */
+    public long getVersion() {
+        return this.version;
+    }
+
+    /**
      * The source of the document if exists.
      */
     public byte[] source() {
         if (source == null) {
             return null;
         }
-        if (LZFDecoder.isCompressed(source)) {
+        if (LZF.isCompressed(source)) {
             try {
                 this.source = LZFDecoder.decode(source);
             } catch (IOException e) {
@@ -220,10 +238,11 @@ public class GetResponse implements ActionResponse, Streamable, Iterable<GetFiel
         static final XContentBuilderString _INDEX = new XContentBuilderString("_index");
         static final XContentBuilderString _TYPE = new XContentBuilderString("_type");
         static final XContentBuilderString _ID = new XContentBuilderString("_id");
+        static final XContentBuilderString _VERSION = new XContentBuilderString("_version");
         static final XContentBuilderString FIELDS = new XContentBuilderString("fields");
     }
 
-    @Override public void toXContent(XContentBuilder builder, Params params) throws IOException {
+    @Override public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         if (!exists()) {
             builder.startObject();
             builder.field(Fields._INDEX, index);
@@ -235,6 +254,9 @@ public class GetResponse implements ActionResponse, Streamable, Iterable<GetFiel
             builder.field(Fields._INDEX, index);
             builder.field(Fields._TYPE, type);
             builder.field(Fields._ID, id);
+            if (version != -1) {
+                builder.field(Fields._VERSION, version);
+            }
             if (source != null) {
                 RestXContentBuilder.restDocumentSource(source, builder, params);
             }
@@ -262,12 +284,14 @@ public class GetResponse implements ActionResponse, Streamable, Iterable<GetFiel
 
             builder.endObject();
         }
+        return builder;
     }
 
     @Override public void readFrom(StreamInput in) throws IOException {
         index = in.readUTF();
         type = in.readUTF();
         id = in.readUTF();
+        version = in.readLong();
         exists = in.readBoolean();
         if (exists) {
             int size = in.readVInt();
@@ -292,6 +316,7 @@ public class GetResponse implements ActionResponse, Streamable, Iterable<GetFiel
         out.writeUTF(index);
         out.writeUTF(type);
         out.writeUTF(id);
+        out.writeLong(version);
         out.writeBoolean(exists);
         if (exists) {
             if (source == null) {

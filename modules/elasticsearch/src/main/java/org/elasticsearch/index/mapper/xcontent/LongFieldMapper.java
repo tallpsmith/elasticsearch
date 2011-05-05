@@ -19,6 +19,7 @@
 
 package org.elasticsearch.index.mapper.xcontent;
 
+import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.Fieldable;
 import org.apache.lucene.search.Filter;
@@ -148,7 +149,7 @@ public class LongFieldMapper extends NumberFieldMapper<Long> {
                 includeLower, includeUpper);
     }
 
-    @Override protected Field parseCreateField(ParseContext context) throws IOException {
+    @Override protected Fieldable parseCreateField(ParseContext context) throws IOException {
         long value;
         if (context.externalValueSet()) {
             Object externalValue = context.externalValue();
@@ -160,7 +161,7 @@ public class LongFieldMapper extends NumberFieldMapper<Long> {
             } else {
                 value = ((Number) externalValue).longValue();
             }
-            if (includeInAll == null || includeInAll) {
+            if (context.includeInAll(includeInAll)) {
                 context.allEntries().addText(names.fullName(), Long.toString(value), boost);
             }
         } else {
@@ -169,27 +170,17 @@ public class LongFieldMapper extends NumberFieldMapper<Long> {
                     return null;
                 }
                 value = nullValue;
-                if (nullValueAsString != null && (includeInAll == null || includeInAll)) {
+                if (nullValueAsString != null && (context.includeInAll(includeInAll))) {
                     context.allEntries().addText(names.fullName(), nullValueAsString, boost);
                 }
             } else {
                 value = context.parser().longValue();
-                if (includeInAll == null || includeInAll) {
+                if (context.includeInAll(includeInAll)) {
                     context.allEntries().addText(names.fullName(), context.parser().text(), boost);
                 }
             }
         }
-
-        Field field = null;
-        if (stored()) {
-            field = new Field(names.indexName(), Numbers.longToBytes(value), store);
-            if (indexed()) {
-                field.setTokenStream(popCachedStream(precisionStep).setLongValue(value));
-            }
-        } else if (indexed()) {
-            field = new Field(names.indexName(), popCachedStream(precisionStep).setLongValue(value));
-        }
-        return field;
+        return new CustomLongNumericField(this, value);
     }
 
     @Override public FieldDataType fieldDataType() {
@@ -236,6 +227,26 @@ public class LongFieldMapper extends NumberFieldMapper<Long> {
         }
         if (includeInAll != null) {
             builder.field("include_in_all", includeInAll);
+        }
+    }
+
+    public static class CustomLongNumericField extends CustomNumericField {
+
+        private final long number;
+
+        private final NumberFieldMapper mapper;
+
+        public CustomLongNumericField(NumberFieldMapper mapper, long number) {
+            super(mapper, mapper.stored() ? Numbers.longToBytes(number) : null);
+            this.mapper = mapper;
+            this.number = number;
+        }
+
+        @Override public TokenStream tokenStreamValue() {
+            if (isIndexed) {
+                return mapper.popCachedStream().setLongValue(number);
+            }
+            return null;
         }
     }
 }

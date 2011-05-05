@@ -19,12 +19,18 @@
 
 package org.elasticsearch.index.analysis;
 
+import org.elasticsearch.ElasticSearchIllegalArgumentException;
 import org.elasticsearch.common.collect.Lists;
+import org.elasticsearch.common.collect.Maps;
 import org.elasticsearch.common.inject.AbstractModule;
 import org.elasticsearch.common.inject.Scopes;
 import org.elasticsearch.common.inject.assistedinject.FactoryProvider;
 import org.elasticsearch.common.inject.multibindings.MapBinder;
+import org.elasticsearch.common.settings.NoClassSettingsException;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.index.analysis.compound.DictionaryCompoundWordTokenFilterFactory;
+import org.elasticsearch.index.analysis.compound.HyphenationCompoundWordTokenFilterFactory;
+import org.elasticsearch.index.analysis.phonetic.PhoneticTokenFilterFactory;
 import org.elasticsearch.indices.analysis.IndicesAnalysisService;
 
 import java.util.LinkedList;
@@ -42,26 +48,13 @@ public class AnalysisModule extends AbstractModule {
         }
 
         public static class CharFiltersBindings {
-            private final MapBinder<String, CharFilterFactoryFactory> binder;
-            private final Map<String, Settings> groupSettings;
+            private final Map<String, Class<? extends CharFilterFactory>> charFilters = Maps.newHashMap();
 
-            public CharFiltersBindings(MapBinder<String, CharFilterFactoryFactory> binder, Map<String, Settings> groupSettings) {
-                this.binder = binder;
-                this.groupSettings = groupSettings;
-            }
-
-            public MapBinder<String, CharFilterFactoryFactory> binder() {
-                return binder;
-            }
-
-            public Map<String, Settings> groupSettings() {
-                return groupSettings;
+            public CharFiltersBindings() {
             }
 
             public void processCharFilter(String name, Class<? extends CharFilterFactory> charFilterFactory) {
-                if (!groupSettings.containsKey(name)) {
-                    binder.addBinding(name).toProvider(FactoryProvider.newFactory(CharFilterFactoryFactory.class, charFilterFactory)).in(Scopes.SINGLETON);
-                }
+                charFilters.put(name, charFilterFactory);
             }
         }
 
@@ -70,26 +63,13 @@ public class AnalysisModule extends AbstractModule {
         }
 
         public static class TokenFiltersBindings {
-            private final MapBinder<String, TokenFilterFactoryFactory> binder;
-            private final Map<String, Settings> groupSettings;
+            private final Map<String, Class<? extends TokenFilterFactory>> tokenFilters = Maps.newHashMap();
 
-            public TokenFiltersBindings(MapBinder<String, TokenFilterFactoryFactory> binder, Map<String, Settings> groupSettings) {
-                this.binder = binder;
-                this.groupSettings = groupSettings;
-            }
-
-            public MapBinder<String, TokenFilterFactoryFactory> binder() {
-                return binder;
-            }
-
-            public Map<String, Settings> groupSettings() {
-                return groupSettings;
+            public TokenFiltersBindings() {
             }
 
             public void processTokenFilter(String name, Class<? extends TokenFilterFactory> tokenFilterFactory) {
-                if (!groupSettings.containsKey(name)) {
-                    binder.addBinding(name).toProvider(FactoryProvider.newFactory(TokenFilterFactoryFactory.class, tokenFilterFactory)).in(Scopes.SINGLETON);
-                }
+                tokenFilters.put(name, tokenFilterFactory);
             }
         }
 
@@ -100,23 +80,21 @@ public class AnalysisModule extends AbstractModule {
         public static class TokenizersBindings {
             private final MapBinder<String, TokenizerFactoryFactory> binder;
             private final Map<String, Settings> groupSettings;
+            private final IndicesAnalysisService indicesAnalysisService;
 
-            public TokenizersBindings(MapBinder<String, TokenizerFactoryFactory> binder, Map<String, Settings> groupSettings) {
+            public TokenizersBindings(MapBinder<String, TokenizerFactoryFactory> binder, Map<String, Settings> groupSettings, IndicesAnalysisService indicesAnalysisService) {
                 this.binder = binder;
                 this.groupSettings = groupSettings;
-            }
-
-            public MapBinder<String, TokenizerFactoryFactory> binder() {
-                return binder;
-            }
-
-            public Map<String, Settings> groupSettings() {
-                return groupSettings;
+                this.indicesAnalysisService = indicesAnalysisService;
             }
 
             public void processTokenizer(String name, Class<? extends TokenizerFactory> tokenizerFactory) {
                 if (!groupSettings.containsKey(name)) {
-                    binder.addBinding(name).toProvider(FactoryProvider.newFactory(TokenizerFactoryFactory.class, tokenizerFactory)).in(Scopes.SINGLETON);
+                    if (indicesAnalysisService != null && indicesAnalysisService.hasTokenizer(name)) {
+                        binder.addBinding(name).toInstance(indicesAnalysisService.tokenizerFactoryFactory(name));
+                    } else {
+                        binder.addBinding(name).toProvider(FactoryProvider.newFactory(TokenizerFactoryFactory.class, tokenizerFactory)).in(Scopes.SINGLETON);
+                    }
                 }
             }
         }
@@ -134,18 +112,6 @@ public class AnalysisModule extends AbstractModule {
                 this.binder = binder;
                 this.groupSettings = groupSettings;
                 this.indicesAnalysisService = indicesAnalysisService;
-            }
-
-            public MapBinder<String, AnalyzerProviderFactory> binder() {
-                return binder;
-            }
-
-            public Map<String, Settings> groupSettings() {
-                return groupSettings;
-            }
-
-            public IndicesAnalysisService indicesAnalysisService() {
-                return indicesAnalysisService;
             }
 
             public void processAnalyzer(String name, Class<? extends AnalyzerProvider> analyzerProvider) {
@@ -190,43 +156,105 @@ public class AnalysisModule extends AbstractModule {
         MapBinder<String, CharFilterFactoryFactory> charFilterBinder
                 = MapBinder.newMapBinder(binder(), String.class, CharFilterFactoryFactory.class);
 
+        // CHAR FILTERS
+
+        AnalysisBinderProcessor.CharFiltersBindings charFiltersBindings = new AnalysisBinderProcessor.CharFiltersBindings();
+        for (AnalysisBinderProcessor processor : processors) {
+            processor.processCharFilters(charFiltersBindings);
+        }
+
         Map<String, Settings> charFiltersSettings = settings.getGroups("index.analysis.char_filter");
         for (Map.Entry<String, Settings> entry : charFiltersSettings.entrySet()) {
             String charFilterName = entry.getKey();
             Settings charFilterSettings = entry.getValue();
 
-            Class<? extends CharFilterFactory> type = charFilterSettings.getAsClass("type", null, "org.elasticsearch.index.analysis.", "CharFilterFactory");
+            Class<? extends CharFilterFactory> type = null;
+            try {
+                type = charFilterSettings.getAsClass("type", null, "org.elasticsearch.index.analysis.", "CharFilterFactory");
+            } catch (NoClassSettingsException e) {
+                // nothing found, see if its in bindings as a binding name
+                if (charFilterSettings.get("type") != null) {
+                    type = charFiltersBindings.charFilters.get(charFilterSettings.get("type"));
+                }
+            }
             if (type == null) {
-                throw new IllegalArgumentException("Char Filter [" + charFilterName + "] must have a type associated with it");
+                // nothing found, see if its in bindings as a binding name
+                throw new ElasticSearchIllegalArgumentException("Char Filter [" + charFilterName + "] must have a type associated with it");
             }
             charFilterBinder.addBinding(charFilterName).toProvider(FactoryProvider.newFactory(CharFilterFactoryFactory.class, type)).in(Scopes.SINGLETON);
         }
-
-        AnalysisBinderProcessor.CharFiltersBindings charFiltersBindings = new AnalysisBinderProcessor.CharFiltersBindings(charFilterBinder, charFiltersSettings);
-        for (AnalysisBinderProcessor processor : processors) {
-            processor.processCharFilters(charFiltersBindings);
+        // go over the char filters in the bindings and register the ones that are not configured
+        for (Map.Entry<String, Class<? extends CharFilterFactory>> entry : charFiltersBindings.charFilters.entrySet()) {
+            String charFilterName = entry.getKey();
+            Class<? extends CharFilterFactory> clazz = entry.getValue();
+            // we don't want to re-register one that already exists
+            if (charFiltersSettings.containsKey(charFilterName)) {
+                continue;
+            }
+            // check, if it requires settings, then don't register it, we know default has no settings...
+            if (clazz.getAnnotation(AnalysisSettingsRequired.class) != null) {
+                continue;
+            }
+            // register it as default under the name
+            if (indicesAnalysisService != null && indicesAnalysisService.hasCharFilter(charFilterName)) {
+                charFilterBinder.addBinding(charFilterName).toInstance(indicesAnalysisService.charFilterFactoryFactory(charFilterName));
+            } else {
+                charFilterBinder.addBinding(charFilterName).toProvider(FactoryProvider.newFactory(CharFilterFactoryFactory.class, clazz)).in(Scopes.SINGLETON);
+            }
         }
 
 
+        // TOKEN FILTERS
+
         MapBinder<String, TokenFilterFactoryFactory> tokenFilterBinder
                 = MapBinder.newMapBinder(binder(), String.class, TokenFilterFactoryFactory.class);
+
+        // initial default bindings
+        AnalysisBinderProcessor.TokenFiltersBindings tokenFiltersBindings = new AnalysisBinderProcessor.TokenFiltersBindings();
+        for (AnalysisBinderProcessor processor : processors) {
+            processor.processTokenFilters(tokenFiltersBindings);
+        }
 
         Map<String, Settings> tokenFiltersSettings = settings.getGroups("index.analysis.filter");
         for (Map.Entry<String, Settings> entry : tokenFiltersSettings.entrySet()) {
             String tokenFilterName = entry.getKey();
             Settings tokenFilterSettings = entry.getValue();
 
-            Class<? extends TokenFilterFactory> type = tokenFilterSettings.getAsClass("type", null, "org.elasticsearch.index.analysis.", "TokenFilterFactory");
+            Class<? extends TokenFilterFactory> type = null;
+            try {
+                type = tokenFilterSettings.getAsClass("type", null, "org.elasticsearch.index.analysis.", "TokenFilterFactory");
+            } catch (NoClassSettingsException e) {
+                // nothing found, see if its in bindings as a binding name
+                if (tokenFilterSettings.get("type") != null) {
+                    type = tokenFiltersBindings.tokenFilters.get(tokenFilterSettings.get("type"));
+                }
+            }
             if (type == null) {
-                throw new IllegalArgumentException("Token Filter [" + tokenFilterName + "] must have a type associated with it");
+                throw new ElasticSearchIllegalArgumentException("Token Filter [" + tokenFilterName + "] must have a type associated with it");
             }
             tokenFilterBinder.addBinding(tokenFilterName).toProvider(FactoryProvider.newFactory(TokenFilterFactoryFactory.class, type)).in(Scopes.SINGLETON);
         }
-
-        AnalysisBinderProcessor.TokenFiltersBindings tokenFiltersBindings = new AnalysisBinderProcessor.TokenFiltersBindings(tokenFilterBinder, tokenFiltersSettings);
-        for (AnalysisBinderProcessor processor : processors) {
-            processor.processTokenFilters(tokenFiltersBindings);
+        // go over the filters in the bindings and register the ones that are not configured
+        for (Map.Entry<String, Class<? extends TokenFilterFactory>> entry : tokenFiltersBindings.tokenFilters.entrySet()) {
+            String tokenFilterName = entry.getKey();
+            Class<? extends TokenFilterFactory> clazz = entry.getValue();
+            // we don't want to re-register one that already exists
+            if (tokenFiltersSettings.containsKey(tokenFilterName)) {
+                continue;
+            }
+            // check, if it requires settings, then don't register it, we know default has no settings...
+            if (clazz.getAnnotation(AnalysisSettingsRequired.class) != null) {
+                continue;
+            }
+            // register it as default under the name
+            if (indicesAnalysisService != null && indicesAnalysisService.hasTokenFilter(tokenFilterName)) {
+                tokenFilterBinder.addBinding(tokenFilterName).toInstance(indicesAnalysisService.tokenFilterFactoryFactory(tokenFilterName));
+            } else {
+                tokenFilterBinder.addBinding(tokenFilterName).toProvider(FactoryProvider.newFactory(TokenFilterFactoryFactory.class, clazz)).in(Scopes.SINGLETON);
+            }
         }
+
+        // TOKENIZER
 
         MapBinder<String, TokenizerFactoryFactory> tokenizerBinder
                 = MapBinder.newMapBinder(binder(), String.class, TokenizerFactoryFactory.class);
@@ -238,15 +266,17 @@ public class AnalysisModule extends AbstractModule {
 
             Class<? extends TokenizerFactory> type = tokenizerSettings.getAsClass("type", null, "org.elasticsearch.index.analysis.", "TokenizerFactory");
             if (type == null) {
-                throw new IllegalArgumentException("Tokenizer [" + tokenizerName + "] must have a type associated with it");
+                throw new ElasticSearchIllegalArgumentException("Tokenizer [" + tokenizerName + "] must have a type associated with it");
             }
             tokenizerBinder.addBinding(tokenizerName).toProvider(FactoryProvider.newFactory(TokenizerFactoryFactory.class, type)).in(Scopes.SINGLETON);
         }
 
-        AnalysisBinderProcessor.TokenizersBindings tokenizersBindings = new AnalysisBinderProcessor.TokenizersBindings(tokenizerBinder, tokenizersSettings);
+        AnalysisBinderProcessor.TokenizersBindings tokenizersBindings = new AnalysisBinderProcessor.TokenizersBindings(tokenizerBinder, tokenizersSettings, indicesAnalysisService);
         for (AnalysisBinderProcessor processor : processors) {
             processor.processTokenizers(tokenizersBindings);
         }
+
+        // ANALYZER
 
         MapBinder<String, AnalyzerProviderFactory> analyzerBinder
                 = MapBinder.newMapBinder(binder(), String.class, AnalyzerProviderFactory.class);
@@ -263,7 +293,7 @@ public class AnalysisModule extends AbstractModule {
                     // we have a tokenizer, use the CustomAnalyzer
                     type = CustomAnalyzerProvider.class;
                 } else {
-                    throw new IllegalArgumentException("Analyzer [" + analyzerName + "] must have a type associated with it or a tokenizer");
+                    throw new ElasticSearchIllegalArgumentException("Analyzer [" + analyzerName + "] must have a type associated with it or a tokenizer");
                 }
             }
             analyzerBinder.addBinding(analyzerName).toProvider(FactoryProvider.newFactory(AnalyzerProviderFactory.class, type)).in(Scopes.SINGLETON);
@@ -286,6 +316,7 @@ public class AnalysisModule extends AbstractModule {
 
         @Override public void processTokenFilters(TokenFiltersBindings tokenFiltersBindings) {
             tokenFiltersBindings.processTokenFilter("stop", StopTokenFilterFactory.class);
+            tokenFiltersBindings.processTokenFilter("reverse", ReverseTokenFilterFactory.class);
             tokenFiltersBindings.processTokenFilter("asciifolding", ASCIIFoldingTokenFilterFactory.class);
             tokenFiltersBindings.processTokenFilter("length", LengthTokenFilterFactory.class);
             tokenFiltersBindings.processTokenFilter("lowercase", LowerCaseTokenFilterFactory.class);
@@ -297,19 +328,32 @@ public class AnalysisModule extends AbstractModule {
             tokenFiltersBindings.processTokenFilter("edgeNGram", EdgeNGramTokenFilterFactory.class);
             tokenFiltersBindings.processTokenFilter("edge_ngram", EdgeNGramTokenFilterFactory.class);
             tokenFiltersBindings.processTokenFilter("shingle", ShingleTokenFilterFactory.class);
+            tokenFiltersBindings.processTokenFilter("phonetic", PhoneticTokenFilterFactory.class);
+            tokenFiltersBindings.processTokenFilter("dictionaryDecompounder", DictionaryCompoundWordTokenFilterFactory.class);
+            tokenFiltersBindings.processTokenFilter("dictionary_decompounder", DictionaryCompoundWordTokenFilterFactory.class);
+            tokenFiltersBindings.processTokenFilter("hyphenationDecompounder", HyphenationCompoundWordTokenFilterFactory.class);
+            tokenFiltersBindings.processTokenFilter("hypennation_decompounder", HyphenationCompoundWordTokenFilterFactory.class);
         }
 
         @Override public void processTokenizers(TokenizersBindings tokenizersBindings) {
             tokenizersBindings.processTokenizer("standard", StandardTokenizerFactory.class);
+            tokenizersBindings.processTokenizer("uax_url_email", UAX29URLEmailTokenizerFactory.class);
+            tokenizersBindings.processTokenizer("uaxUrlEmail", UAX29URLEmailTokenizerFactory.class);
+            tokenizersBindings.processTokenizer("path_hierarchy", PathHierarchyTokenizerFactory.class);
+            tokenizersBindings.processTokenizer("pathHierarchy", PathHierarchyTokenizerFactory.class);
             tokenizersBindings.processTokenizer("keyword", KeywordTokenizerFactory.class);
             tokenizersBindings.processTokenizer("letter", LetterTokenizerFactory.class);
             tokenizersBindings.processTokenizer("lowercase", LowerCaseTokenizerFactory.class);
             tokenizersBindings.processTokenizer("whitespace", WhitespaceTokenizerFactory.class);
-            tokenizersBindings.processTokenizer("russian_letter", RussianLetterTokenizerFactory.class);
-            tokenizersBindings.processTokenizer("russianLetter", RussianLetterTokenizerFactory.class);
+
+            tokenizersBindings.processTokenizer("nGram", NGramTokenizerFactory.class);
+            tokenizersBindings.processTokenizer("ngram", NGramTokenizerFactory.class);
+            tokenizersBindings.processTokenizer("edgeNGram", EdgeNGramTokenizerFactory.class);
+            tokenizersBindings.processTokenizer("edge_ngram", EdgeNGramTokenizerFactory.class);
         }
 
         @Override public void processAnalyzers(AnalyzersBindings analyzersBindings) {
+            analyzersBindings.processAnalyzer("default", StandardAnalyzerProvider.class);
             analyzersBindings.processAnalyzer("standard", StandardAnalyzerProvider.class);
             analyzersBindings.processAnalyzer("standard_html_strip", StandardHtmlStripAnalyzerProvider.class);
             analyzersBindings.processAnalyzer("standardHtmlStrip", StandardHtmlStripAnalyzerProvider.class);
@@ -322,10 +366,14 @@ public class AnalysisModule extends AbstractModule {
 
     private static class ExtendedProcessor extends AnalysisBinderProcessor {
         @Override public void processTokenFilters(TokenFiltersBindings tokenFiltersBindings) {
+            tokenFiltersBindings.processTokenFilter("snowball", SnowballTokenFilterFactory.class);
+
             tokenFiltersBindings.processTokenFilter("arabicStem", ArabicStemTokenFilterFactory.class);
             tokenFiltersBindings.processTokenFilter("arabic_stem", ArabicStemTokenFilterFactory.class);
             tokenFiltersBindings.processTokenFilter("brazilianStem", BrazilianStemTokenFilterFactory.class);
             tokenFiltersBindings.processTokenFilter("brazilian_stem", BrazilianStemTokenFilterFactory.class);
+            tokenFiltersBindings.processTokenFilter("czechStem", CzechStemTokenFilterFactory.class);
+            tokenFiltersBindings.processTokenFilter("czech_stem", CzechStemTokenFilterFactory.class);
             tokenFiltersBindings.processTokenFilter("dutchStem", DutchStemTokenFilterFactory.class);
             tokenFiltersBindings.processTokenFilter("dutch_stem", DutchStemTokenFilterFactory.class);
             tokenFiltersBindings.processTokenFilter("frenchStem", FrenchStemTokenFilterFactory.class);
@@ -337,14 +385,11 @@ public class AnalysisModule extends AbstractModule {
         }
 
         @Override public void processTokenizers(TokenizersBindings tokenizersBindings) {
-            tokenizersBindings.processTokenizer("nGram", NGramTokenizerFactory.class);
-            tokenizersBindings.processTokenizer("ngram", NGramTokenizerFactory.class);
-            tokenizersBindings.processTokenizer("edgeNGram", EdgeNGramTokenizerFactory.class);
-            tokenizersBindings.processTokenizer("edge_ngram", EdgeNGramTokenizerFactory.class);
         }
 
         @Override public void processAnalyzers(AnalyzersBindings analyzersBindings) {
             analyzersBindings.processAnalyzer("pattern", PatternAnalyzerProvider.class);
+            analyzersBindings.processAnalyzer("snowball", SnowballAnalyzerProvider.class);
 
             analyzersBindings.processAnalyzer("arabic", ArabicAnalyzerProvider.class);
             analyzersBindings.processAnalyzer("brazilian", BrazilianAnalyzerProvider.class);

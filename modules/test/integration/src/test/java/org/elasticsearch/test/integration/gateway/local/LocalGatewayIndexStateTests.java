@@ -30,6 +30,7 @@ import org.elasticsearch.cluster.routing.ShardRoutingState;
 import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.xcontent.XContentFactory;
+import org.elasticsearch.env.NodeEnvironment;
 import org.elasticsearch.gateway.Gateway;
 import org.elasticsearch.node.internal.InternalNode;
 import org.elasticsearch.test.integration.AbstractNodesTests;
@@ -37,6 +38,7 @@ import org.testng.annotations.AfterMethod;
 import org.testng.annotations.Test;
 
 import static org.elasticsearch.common.settings.ImmutableSettings.*;
+import static org.elasticsearch.index.query.xcontent.QueryBuilders.*;
 import static org.hamcrest.MatcherAssert.*;
 import static org.hamcrest.Matchers.*;
 
@@ -52,7 +54,9 @@ public class LocalGatewayIndexStateTests extends AbstractNodesTests {
             if (node("node" + i) != null) {
                 node("node" + i).stop();
                 // since we store (by default) the index snapshot under the gateway, resetting it will reset the index data as well
-                ((InternalNode) node("node" + i)).injector().getInstance(Gateway.class).reset();
+                if (((InternalNode) node("node" + i)).injector().getInstance(NodeEnvironment.class).hasNodeFile()) {
+                    ((InternalNode) node("node" + i)).injector().getInstance(Gateway.class).reset();
+                }
             }
         }
         closeAllNodes();
@@ -142,7 +146,7 @@ public class LocalGatewayIndexStateTests extends AbstractNodesTests {
 
         logger.info("--> trying to index into a closed index ...");
         try {
-            client("node1").prepareIndex("test", "type1", "1").setSource("field1", "value1").execute().actionGet();
+            client("node1").prepareIndex("test", "type1", "1").setSource("field1", "value1").setTimeout("1s").execute().actionGet();
             assert false;
         } catch (ClusterBlockException e) {
             // all is well
@@ -196,7 +200,7 @@ public class LocalGatewayIndexStateTests extends AbstractNodesTests {
 
         logger.info("--> trying to index into a closed index ...");
         try {
-            client("node1").prepareIndex("test", "type1", "1").setSource("field1", "value1").execute().actionGet();
+            client("node1").prepareIndex("test", "type1", "1").setSource("field1", "value1").setTimeout("1s").execute().actionGet();
             assert false;
         } catch (ClusterBlockException e) {
             // all is well
@@ -220,5 +224,96 @@ public class LocalGatewayIndexStateTests extends AbstractNodesTests {
 
         logger.info("--> indexing a simple document");
         client("node1").prepareIndex("test", "type1", "2").setSource("field1", "value1").execute().actionGet();
+    }
+
+    @Test public void testJustMasterNode() throws Exception {
+        logger.info("--> cleaning nodes");
+        buildNode("node1", settingsBuilder().put("gateway.type", "local").build());
+        buildNode("node2", settingsBuilder().put("gateway.type", "local").build());
+        cleanAndCloseNodes();
+
+        logger.info("--> starting 1 master node non data");
+        startNode("node1", settingsBuilder().put("node.data", false).put("gateway.type", "local").put("index.number_of_shards", 2).put("index.number_of_replicas", 1).build());
+
+        logger.info("--> create an index");
+        client("node1").admin().indices().prepareCreate("test").execute().actionGet();
+
+        logger.info("--> closing master node");
+        closeNode("node1");
+
+        logger.info("--> starting 1 master node non data again");
+        startNode("node1", settingsBuilder().put("node.data", false).put("gateway.type", "local").put("index.number_of_shards", 2).put("index.number_of_replicas", 1).build());
+
+        logger.info("--> waiting for test index to be created");
+        ClusterHealthResponse health = client("node1").admin().cluster().prepareHealth().setIndices("test").execute().actionGet();
+        assertThat(health.timedOut(), equalTo(false));
+
+        logger.info("--> verify we have an index");
+        ClusterStateResponse clusterStateResponse = client("node1").admin().cluster().prepareState().setFilterIndices("test").execute().actionGet();
+        assertThat(clusterStateResponse.state().metaData().hasIndex("test"), equalTo(true));
+    }
+
+    @Test public void testJustMasterNodeAndJustDataNode() throws Exception {
+        logger.info("--> cleaning nodes");
+        buildNode("node1", settingsBuilder().put("gateway.type", "local").build());
+        buildNode("node2", settingsBuilder().put("gateway.type", "local").build());
+        cleanAndCloseNodes();
+
+        logger.info("--> starting 1 master node non data");
+        startNode("node1", settingsBuilder().put("node.data", false).put("gateway.type", "local").put("index.number_of_shards", 2).put("index.number_of_replicas", 1).build());
+        startNode("node2", settingsBuilder().put("node.master", false).put("gateway.type", "local").put("index.number_of_shards", 2).put("index.number_of_replicas", 1).build());
+
+        logger.info("--> create an index");
+        client("node1").admin().indices().prepareCreate("test").execute().actionGet();
+
+        logger.info("--> waiting for test index to be created");
+        ClusterHealthResponse health = client("node1").admin().cluster().prepareHealth().setIndices("test").setWaitForYellowStatus().execute().actionGet();
+        assertThat(health.timedOut(), equalTo(false));
+
+        client("node1").prepareIndex("test", "type1").setSource("field1", "value1").setTimeout("100ms").execute().actionGet();
+    }
+
+    @Test public void testTwoNodesSingleDoc() throws Exception {
+        logger.info("--> cleaning nodes");
+        buildNode("node1", settingsBuilder().put("gateway.type", "local").build());
+        buildNode("node2", settingsBuilder().put("gateway.type", "local").build());
+        cleanAndCloseNodes();
+
+        logger.info("--> starting 2 nodes");
+        startNode("node1", settingsBuilder().put("gateway.type", "local").put("index.number_of_shards", 5).put("index.number_of_replicas", 1).build());
+        startNode("node2", settingsBuilder().put("gateway.type", "local").put("index.number_of_shards", 5).put("index.number_of_replicas", 1).build());
+
+        logger.info("--> indexing a simple document");
+        client("node1").prepareIndex("test", "type1", "1").setSource("field1", "value1").setRefresh(true).execute().actionGet();
+
+        logger.info("--> waiting for green status");
+        ClusterHealthResponse health = client("node1").admin().cluster().prepareHealth().setWaitForGreenStatus().setWaitForNodes("2").execute().actionGet();
+        assertThat(health.timedOut(), equalTo(false));
+
+        logger.info("--> verify 1 doc in the index");
+        for (int i = 0; i < 10; i++) {
+            assertThat(client("node1").prepareCount().setQuery(matchAllQuery()).execute().actionGet().count(), equalTo(1l));
+        }
+
+        logger.info("--> closing test index...");
+        client("node1").admin().indices().prepareClose("test").execute().actionGet();
+
+
+        ClusterStateResponse stateResponse = client("node1").admin().cluster().prepareState().execute().actionGet();
+        assertThat(stateResponse.state().metaData().index("test").state(), equalTo(IndexMetaData.State.CLOSE));
+        assertThat(stateResponse.state().routingTable().index("test"), nullValue());
+
+        logger.info("--> opening the index...");
+        client("node1").admin().indices().prepareOpen("test").execute().actionGet();
+
+        logger.info("--> waiting for green status");
+        health = client("node1").admin().cluster().prepareHealth().setWaitForGreenStatus().setWaitForNodes("2").execute().actionGet();
+        assertThat(health.timedOut(), equalTo(false));
+
+        logger.info("--> verify 1 doc in the index");
+        assertThat(client("node1").prepareCount().setQuery(matchAllQuery()).execute().actionGet().count(), equalTo(1l));
+        for (int i = 0; i < 10; i++) {
+            assertThat(client("node1").prepareCount().setQuery(matchAllQuery()).execute().actionGet().count(), equalTo(1l));
+        }
     }
 }

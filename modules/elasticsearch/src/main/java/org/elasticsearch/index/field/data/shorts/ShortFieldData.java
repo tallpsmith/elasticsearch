@@ -21,7 +21,8 @@ package org.elasticsearch.index.field.data.shorts;
 
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.search.FieldCache;
-import org.elasticsearch.common.trove.TShortArrayList;
+import org.elasticsearch.common.RamUsage;
+import org.elasticsearch.common.trove.list.array.TShortArrayList;
 import org.elasticsearch.index.field.data.FieldDataType;
 import org.elasticsearch.index.field.data.NumericFieldData;
 import org.elasticsearch.index.field.data.support.FieldDataLoader;
@@ -40,6 +41,14 @@ public abstract class ShortFieldData extends NumericFieldData<ShortDocFieldData>
     protected ShortFieldData(String fieldName, short[] values) {
         super(fieldName);
         this.values = values;
+    }
+
+    @Override protected long computeSizeInBytes() {
+        return RamUsage.NUM_BYTES_SHORT * values.length + RamUsage.NUM_BYTES_ARRAY_HEADER;
+    }
+
+    public final short[] values() {
+        return this.values;
     }
 
     abstract public short value(int docId);
@@ -102,6 +111,13 @@ public abstract class ShortFieldData extends NumericFieldData<ShortDocFieldData>
         void onValue(short value);
     }
 
+    public abstract void forEachValueInDoc(int docId, ValueInDocProc proc);
+
+    public static interface ValueInDocProc {
+        void onValue(int docId, short value);
+
+        void onMissing(int docId);
+    }
 
     public static ShortFieldData load(IndexReader reader, String field) throws IOException {
         return FieldDataLoader.load(reader, field, new ShortTypeLoader());
@@ -122,11 +138,11 @@ public abstract class ShortFieldData extends NumericFieldData<ShortDocFieldData>
         }
 
         @Override public ShortFieldData buildSingleValue(String field, int[] ordinals) {
-            return new SingleValueShortFieldData(field, ordinals, terms.toNativeArray());
+            return new SingleValueShortFieldData(field, ordinals, terms.toArray());
         }
 
         @Override public ShortFieldData buildMultiValue(String field, int[][] ordinals) {
-            return new MultiValueShortFieldData(field, ordinals, terms.toNativeArray());
+            return new MultiValueShortFieldData(field, ordinals, terms.toArray());
         }
     }
 }

@@ -39,7 +39,7 @@ public class Utf8RestResponse extends AbstractRestResponse implements RestRespon
         EMPTY = temp;
     }
 
-    private final Status status;
+    private final RestStatus status;
 
     private final UnicodeUtil.UTF8Result utf8Result;
 
@@ -47,15 +47,15 @@ public class Utf8RestResponse extends AbstractRestResponse implements RestRespon
 
     private final UnicodeUtil.UTF8Result suffixUtf8Result;
 
-    public Utf8RestResponse(Status status) {
+    public Utf8RestResponse(RestStatus status) {
         this(status, EMPTY);
     }
 
-    public Utf8RestResponse(Status status, UnicodeUtil.UTF8Result utf8Result) {
+    public Utf8RestResponse(RestStatus status, UnicodeUtil.UTF8Result utf8Result) {
         this(status, utf8Result, null, null);
     }
 
-    public Utf8RestResponse(Status status, UnicodeUtil.UTF8Result utf8Result,
+    public Utf8RestResponse(RestStatus status, UnicodeUtil.UTF8Result utf8Result,
                             UnicodeUtil.UTF8Result prefixUtf8Result, UnicodeUtil.UTF8Result suffixUtf8Result) {
         this.status = status;
         this.utf8Result = utf8Result;
@@ -79,7 +79,7 @@ public class Utf8RestResponse extends AbstractRestResponse implements RestRespon
         return utf8Result.length;
     }
 
-    @Override public Status status() {
+    @Override public RestStatus status() {
         return status;
     }
 
@@ -88,7 +88,7 @@ public class Utf8RestResponse extends AbstractRestResponse implements RestRespon
     }
 
     @Override public int prefixContentLength() {
-        return prefixUtf8Result != null ? prefixUtf8Result.length : -1;
+        return prefixUtf8Result != null ? prefixUtf8Result.length : 0;
     }
 
     @Override public byte[] suffixContent() {
@@ -96,6 +96,6 @@ public class Utf8RestResponse extends AbstractRestResponse implements RestRespon
     }
 
     @Override public int suffixContentLength() {
-        return suffixUtf8Result != null ? suffixUtf8Result.length : -1;
+        return suffixUtf8Result != null ? suffixUtf8Result.length : 0;
     }
 }

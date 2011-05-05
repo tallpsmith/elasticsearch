@@ -26,9 +26,9 @@ import org.elasticsearch.index.mapper.MapperService;
 import org.elasticsearch.index.mapper.xcontent.geo.GeoPointFieldData;
 import org.elasticsearch.index.mapper.xcontent.geo.GeoPointFieldDataType;
 import org.elasticsearch.index.search.geo.GeoDistance;
+import org.elasticsearch.search.facet.AbstractFacetCollector;
 import org.elasticsearch.search.facet.Facet;
 import org.elasticsearch.search.facet.FacetPhaseExecutionException;
-import org.elasticsearch.search.facet.support.AbstractFacetCollector;
 import org.elasticsearch.search.internal.SearchContext;
 
 import java.io.IOException;
@@ -37,8 +37,6 @@ import java.io.IOException;
  * @author kimchy (shay.banon)
  */
 public class GeoDistanceFacetCollector extends AbstractFacetCollector {
-
-    protected final String fieldName;
 
     protected final String indexFieldName;
 
@@ -56,10 +54,11 @@ public class GeoDistanceFacetCollector extends AbstractFacetCollector {
 
     protected final GeoDistanceFacet.Entry[] entries;
 
+    protected GeoPointFieldData.ValueInDocProc aggregator;
+
     public GeoDistanceFacetCollector(String facetName, String fieldName, double lat, double lon, DistanceUnit unit, GeoDistance geoDistance,
                                      GeoDistanceFacet.Entry[] entries, SearchContext context) {
         super(facetName);
-        this.fieldName = fieldName;
         this.lat = lat;
         this.lon = lon;
         this.unit = unit;
@@ -81,6 +80,7 @@ public class GeoDistanceFacetCollector extends AbstractFacetCollector {
         }
 
         this.indexFieldName = smartMappers.mapper().names().indexName();
+        this.aggregator = new Aggregator(lat, lon, geoDistance, unit, entries);
     }
 
     @Override protected void doSetNextReader(IndexReader reader, int docBase) throws IOException {
@@ -88,34 +88,55 @@ public class GeoDistanceFacetCollector extends AbstractFacetCollector {
     }
 
     @Override protected void doCollect(int doc) throws IOException {
-        if (!fieldData.hasValue(doc)) {
-            return;
+        for (GeoDistanceFacet.Entry entry : entries) {
+            entry.foundInDoc = false;
         }
-
-        if (fieldData.multiValued()) {
-            double[] lats = fieldData.latValues(doc);
-            double[] lons = fieldData.lonValues(doc);
-            for (int i = 0; i < lats.length; i++) {
-                double distance = geoDistance.calculate(lat, lon, lats[i], lons[i], unit);
-                for (GeoDistanceFacet.Entry entry : entries) {
-                    if (distance >= entry.getFrom() && distance < entry.getTo()) {
-                        entry.count++;
-                        entry.total += distance;
-                    }
-                }
-            }
-        } else {
-            double distance = geoDistance.calculate(lat, lon, fieldData.latValue(doc), fieldData.lonValue(doc), unit);
-            for (GeoDistanceFacet.Entry entry : entries) {
-                if (distance >= entry.getFrom() && distance < entry.getTo()) {
-                    entry.count++;
-                    entry.total += distance;
-                }
-            }
-        }
+        fieldData.forEachValueInDoc(doc, aggregator);
     }
 
     @Override public Facet facet() {
-        return new InternalGeoDistanceFacet(facetName, fieldName, fieldName, unit, entries);
+        return new InternalGeoDistanceFacet(facetName, entries);
+    }
+
+    public static class Aggregator implements GeoPointFieldData.ValueInDocProc {
+
+        protected final double lat;
+
+        protected final double lon;
+
+        private final GeoDistance geoDistance;
+
+        private final DistanceUnit unit;
+
+        private final GeoDistanceFacet.Entry[] entries;
+
+        public Aggregator(double lat, double lon, GeoDistance geoDistance, DistanceUnit unit, GeoDistanceFacet.Entry[] entries) {
+            this.lat = lat;
+            this.lon = lon;
+            this.geoDistance = geoDistance;
+            this.unit = unit;
+            this.entries = entries;
+        }
+
+        @Override public void onValue(int docId, double lat, double lon) {
+            double distance = geoDistance.calculate(this.lat, this.lon, lat, lon, unit);
+            for (GeoDistanceFacet.Entry entry : entries) {
+                if (entry.foundInDoc) {
+                    continue;
+                }
+                if (distance >= entry.getFrom() && distance < entry.getTo()) {
+                    entry.foundInDoc = true;
+                    entry.count++;
+                    entry.totalCount++;
+                    entry.total += distance;
+                    if (distance < entry.min) {
+                        entry.min = distance;
+                    }
+                    if (distance > entry.max) {
+                        entry.max = distance;
+                    }
+                }
+            }
+        }
     }
 }

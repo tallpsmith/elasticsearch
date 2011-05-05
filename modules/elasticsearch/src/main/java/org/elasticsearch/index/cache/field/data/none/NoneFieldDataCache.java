@@ -56,9 +56,18 @@ public class NoneFieldDataCache extends AbstractIndexComponent implements FieldD
     @Override public void clear(IndexReader reader) {
     }
 
-    @Override public void clearUnreferenced() {
+    @Override public void close() throws ElasticSearchException {
     }
 
-    @Override public void close() throws ElasticSearchException {
+    @Override public long sizeInBytes() {
+        return 0;
+    }
+
+    @Override public long sizeInBytes(String fieldName) {
+        return 0;
+    }
+
+    @Override public long evictions() {
+        return 0;
     }
 }

@@ -21,16 +21,15 @@ package org.elasticsearch.action.search;
 
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.TransportActions;
-import org.elasticsearch.action.search.type.TransportSearchDfsQueryAndFetchAction;
-import org.elasticsearch.action.search.type.TransportSearchDfsQueryThenFetchAction;
-import org.elasticsearch.action.search.type.TransportSearchQueryAndFetchAction;
-import org.elasticsearch.action.search.type.TransportSearchQueryThenFetchAction;
+import org.elasticsearch.action.search.type.*;
 import org.elasticsearch.action.support.BaseAction;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.routing.GroupShardsIterator;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.indices.IndexMissingException;
+import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.BaseTransportRequestHandler;
 import org.elasticsearch.transport.TransportChannel;
 import org.elasticsearch.transport.TransportService;
@@ -52,19 +51,28 @@ public class TransportSearchAction extends BaseAction<SearchRequest, SearchRespo
 
     private final TransportSearchQueryAndFetchAction queryAndFetchAction;
 
+    private final TransportSearchScanAction scanAction;
+
+    private final TransportSearchCountAction countAction;
+
     private final boolean optimizeSingleShard;
 
-    @Inject public TransportSearchAction(Settings settings, TransportService transportService, ClusterService clusterService,
+    @Inject public TransportSearchAction(Settings settings, ThreadPool threadPool,
+                                         TransportService transportService, ClusterService clusterService,
                                          TransportSearchDfsQueryThenFetchAction dfsQueryThenFetchAction,
                                          TransportSearchQueryThenFetchAction queryThenFetchAction,
                                          TransportSearchDfsQueryAndFetchAction dfsQueryAndFetchAction,
-                                         TransportSearchQueryAndFetchAction queryAndFetchAction) {
-        super(settings);
+                                         TransportSearchQueryAndFetchAction queryAndFetchAction,
+                                         TransportSearchScanAction scanAction,
+                                         TransportSearchCountAction countAction) {
+        super(settings, threadPool);
         this.clusterService = clusterService;
         this.dfsQueryThenFetchAction = dfsQueryThenFetchAction;
         this.queryThenFetchAction = queryThenFetchAction;
         this.dfsQueryAndFetchAction = dfsQueryAndFetchAction;
         this.queryAndFetchAction = queryAndFetchAction;
+        this.scanAction = scanAction;
+        this.countAction = countAction;
 
         this.optimizeSingleShard = componentSettings.getAsBoolean("optimize_single_shard", true);
 
@@ -73,15 +81,18 @@ public class TransportSearchAction extends BaseAction<SearchRequest, SearchRespo
 
     @Override protected void doExecute(SearchRequest searchRequest, ActionListener<SearchResponse> listener) {
         // optimize search type for cases where there is only one shard group to search on
-        if (optimizeSingleShard) {
+        if (optimizeSingleShard && searchRequest.searchType() != SCAN && searchRequest.searchType() != COUNT) {
             try {
                 ClusterState clusterState = clusterService.state();
                 searchRequest.indices(clusterState.metaData().concreteIndices(searchRequest.indices()));
-                GroupShardsIterator groupIt = clusterService.operationRouting().searchShards(clusterState, searchRequest.indices(), searchRequest.queryHint(), searchRequest.routing());
+                GroupShardsIterator groupIt = clusterService.operationRouting().searchShards(clusterState, searchRequest.indices(), searchRequest.queryHint(), searchRequest.routing(), searchRequest.preference());
                 if (groupIt.size() == 1) {
                     // if we only have one group, then we always want Q_A_F, no need for DFS, and no need to do THEN since we hit one shard
                     searchRequest.searchType(QUERY_AND_FETCH);
                 }
+            } catch (IndexMissingException e) {
+                // ignore this, we will notify the search response if its really the case
+                // from the actual action
             } catch (Exception e) {
                 logger.debug("failed to optimize search type, continue as normal", e);
             }
@@ -95,6 +106,10 @@ public class TransportSearchAction extends BaseAction<SearchRequest, SearchRespo
             dfsQueryAndFetchAction.execute(searchRequest, listener);
         } else if (searchRequest.searchType() == SearchType.QUERY_AND_FETCH) {
             queryAndFetchAction.execute(searchRequest, listener);
+        } else if (searchRequest.searchType() == SearchType.SCAN) {
+            scanAction.execute(searchRequest, listener);
+        } else if (searchRequest.searchType() == SearchType.COUNT) {
+            countAction.execute(searchRequest, listener);
         }
     }
 
@@ -130,8 +145,8 @@ public class TransportSearchAction extends BaseAction<SearchRequest, SearchRespo
             });
         }
 
-        @Override public boolean spawn() {
-            return false;
+        @Override public String executor() {
+            return ThreadPool.Names.SAME;
         }
     }
 }

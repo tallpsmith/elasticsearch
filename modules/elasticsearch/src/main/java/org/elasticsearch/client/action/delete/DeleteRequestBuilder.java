@@ -26,8 +26,8 @@ import org.elasticsearch.action.delete.DeleteResponse;
 import org.elasticsearch.action.support.replication.ReplicationType;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.client.action.support.BaseRequestBuilder;
-
-import javax.annotation.Nullable;
+import org.elasticsearch.common.Nullable;
+import org.elasticsearch.index.VersionType;
 
 /**
  * A delete document action request builder.
@@ -80,6 +80,23 @@ public class DeleteRequestBuilder extends BaseRequestBuilder<DeleteRequest, Dele
      */
     public DeleteRequestBuilder setRefresh(boolean refresh) {
         request.refresh(refresh);
+        return this;
+    }
+
+    /**
+     * Sets the version, which will cause the delete operation to only be performed if a matching
+     * version exists and no changes happened on the doc since then.
+     */
+    public DeleteRequestBuilder setVersion(long version) {
+        request.version(version);
+        return this;
+    }
+
+    /**
+     * Sets the type of versioning to use. Defaults to {@link VersionType#INTERNAL}.
+     */
+    public DeleteRequestBuilder setVersionType(VersionType versionType) {
+        request.versionType(versionType);
         return this;
     }
 

@@ -42,7 +42,7 @@ public class CompressedString implements Streamable {
 
     public CompressedString(String str) throws IOException {
         UnicodeUtil.UTF8Result result = Unicode.unsafeFromStringAsUtf8(str);
-        this.bytes = LZFEncoder.encodeWithCache(result.result, result.length);
+        this.bytes = LZFEncoder.encode(result.result, result.length);
     }
 
     public byte[] compressed() {
@@ -86,5 +86,13 @@ public class CompressedString implements Streamable {
 
     @Override public int hashCode() {
         return bytes != null ? Arrays.hashCode(bytes) : 0;
+    }
+
+    @Override public String toString() {
+        try {
+            return string();
+        } catch (IOException e) {
+            return "_na_";
+        }
     }
 }

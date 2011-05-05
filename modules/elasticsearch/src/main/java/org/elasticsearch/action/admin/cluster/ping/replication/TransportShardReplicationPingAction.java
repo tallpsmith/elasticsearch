@@ -41,6 +41,10 @@ public class TransportShardReplicationPingAction extends TransportShardReplicati
         super(settings, transportService, clusterService, indicesService, threadPool, shardStateAction);
     }
 
+    @Override protected String executor() {
+        return ThreadPool.Names.CACHED;
+    }
+
     @Override protected boolean checkWriteConsistency() {
         return true;
     }
@@ -57,8 +61,8 @@ public class TransportShardReplicationPingAction extends TransportShardReplicati
         return "ping/replication/shard";
     }
 
-    @Override protected ShardReplicationPingResponse shardOperationOnPrimary(ClusterState clusterState, ShardOperationRequest shardRequest) {
-        return new ShardReplicationPingResponse();
+    @Override protected PrimaryResponse<ShardReplicationPingResponse> shardOperationOnPrimary(ClusterState clusterState, ShardOperationRequest shardRequest) {
+        return new PrimaryResponse<ShardReplicationPingResponse>(new ShardReplicationPingResponse(), null);
     }
 
     @Override protected void shardOperationOnReplica(ShardOperationRequest shardRequest) {

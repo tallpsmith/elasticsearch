@@ -30,11 +30,11 @@ import org.elasticsearch.action.support.master.TransportMasterNodeOperationActio
 import org.elasticsearch.client.Requests;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.ClusterState;
+import org.elasticsearch.cluster.block.ClusterBlockException;
 import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.cluster.metadata.MetaDataMappingService;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.index.mapper.TypeFieldMapper;
 import org.elasticsearch.index.query.xcontent.FilterBuilders;
 import org.elasticsearch.index.query.xcontent.QueryBuilders;
 import org.elasticsearch.threadpool.ThreadPool;
@@ -65,6 +65,9 @@ public class TransportDeleteMappingAction extends TransportMasterNodeOperationAc
         this.refreshAction = refreshAction;
     }
 
+    @Override protected String executor() {
+        return ThreadPool.Names.CACHED;
+    }
 
     @Override protected String transportAction() {
         return TransportActions.Admin.Indices.Mapping.DELETE;
@@ -78,20 +81,21 @@ public class TransportDeleteMappingAction extends TransportMasterNodeOperationAc
         return new DeleteMappingResponse();
     }
 
-    @Override protected void checkBlock(DeleteMappingRequest request, ClusterState state) {
+    @Override protected void doExecute(DeleteMappingRequest request, ActionListener<DeleteMappingResponse> listener) {
         // update to concrete indices
-        request.indices(state.metaData().concreteIndices(request.indices()));
+        request.indices(clusterService.state().metaData().concreteIndices(request.indices()));
+        super.doExecute(request, listener);
+    }
 
-        for (String index : request.indices()) {
-            state.blocks().indexBlockedRaiseException(ClusterBlockLevel.METADATA, index);
-        }
+    @Override protected ClusterBlockException checkBlock(DeleteMappingRequest request, ClusterState state) {
+        return state.blocks().indicesBlockedException(ClusterBlockLevel.METADATA, request.indices());
     }
 
     @Override protected DeleteMappingResponse masterOperation(final DeleteMappingRequest request, final ClusterState state) throws ElasticSearchException {
 
         final AtomicReference<Throwable> failureRef = new AtomicReference<Throwable>();
         final CountDownLatch latch = new CountDownLatch(1);
-        deleteByQueryAction.execute(Requests.deleteByQueryRequest(request.indices()).query(QueryBuilders.filteredQuery(QueryBuilders.matchAllQuery(), FilterBuilders.termFilter(TypeFieldMapper.NAME, request.type()))), new ActionListener<DeleteByQueryResponse>() {
+        deleteByQueryAction.execute(Requests.deleteByQueryRequest(request.indices()).query(QueryBuilders.filteredQuery(QueryBuilders.matchAllQuery(), FilterBuilders.typeFilter(request.type()))), new ActionListener<DeleteByQueryResponse>() {
             @Override public void onResponse(DeleteByQueryResponse deleteByQueryResponse) {
                 refreshAction.execute(Requests.refreshRequest(request.indices()), new ActionListener<RefreshResponse>() {
                     @Override public void onResponse(RefreshResponse refreshResponse) {

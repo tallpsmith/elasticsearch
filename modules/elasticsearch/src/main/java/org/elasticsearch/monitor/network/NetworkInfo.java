@@ -35,7 +35,17 @@ public class NetworkInfo implements Streamable, Serializable, ToXContent {
 
     public static final Interface NA_INTERFACE = new Interface();
 
+    long refreshInterval;
+
     Interface primary = NA_INTERFACE;
+
+    public long refreshInterval() {
+        return this.refreshInterval;
+    }
+
+    public long getRefreshInterval() {
+        return this.refreshInterval;
+    }
 
     public Interface primaryInterface() {
         return primary;
@@ -45,8 +55,9 @@ public class NetworkInfo implements Streamable, Serializable, ToXContent {
         return primaryInterface();
     }
 
-    @Override public void toXContent(XContentBuilder builder, Params params) throws IOException {
+    @Override public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject("network");
+        builder.field("refresh_interval", refreshInterval);
         if (primary != NA_INTERFACE) {
             builder.startObject("primary_interface");
             builder.field("address", primary.address());
@@ -55,6 +66,7 @@ public class NetworkInfo implements Streamable, Serializable, ToXContent {
             builder.endObject();
         }
         builder.endObject();
+        return builder;
     }
 
     public static NetworkInfo readNetworkInfo(StreamInput in) throws IOException {
@@ -64,10 +76,12 @@ public class NetworkInfo implements Streamable, Serializable, ToXContent {
     }
 
     @Override public void readFrom(StreamInput in) throws IOException {
+        refreshInterval = in.readLong();
         primary = Interface.readNetworkInterface(in);
     }
 
     @Override public void writeTo(StreamOutput out) throws IOException {
+        out.writeLong(refreshInterval);
         primary.writeTo(out);
     }
 

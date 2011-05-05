@@ -22,10 +22,15 @@ package org.elasticsearch.gateway.blobstore;
 import org.elasticsearch.cluster.ClusterName;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.metadata.MetaData;
-import org.elasticsearch.cluster.metadata.MetaDataCreateIndexService;
+import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.blobstore.*;
 import org.elasticsearch.common.collect.ImmutableMap;
 import org.elasticsearch.common.collect.Lists;
+import org.elasticsearch.common.compress.lzf.LZF;
+import org.elasticsearch.common.compress.lzf.LZFEncoder;
+import org.elasticsearch.common.io.stream.BytesStreamInput;
+import org.elasticsearch.common.io.stream.CachedStreamInput;
+import org.elasticsearch.common.io.stream.LZFStreamInput;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.xcontent.*;
@@ -34,8 +39,8 @@ import org.elasticsearch.gateway.shared.SharedStorageGateway;
 import org.elasticsearch.index.gateway.CommitPoint;
 import org.elasticsearch.index.gateway.CommitPoints;
 import org.elasticsearch.index.gateway.blobstore.BlobStoreIndexGateway;
+import org.elasticsearch.threadpool.ThreadPool;
 
-import javax.annotation.Nullable;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.util.List;
@@ -53,10 +58,12 @@ public abstract class BlobStoreGateway extends SharedStorageGateway {
 
     private ImmutableBlobContainer metaDataBlobContainer;
 
+    private boolean compress;
+
     private volatile int currentIndex;
 
-    protected BlobStoreGateway(Settings settings, ClusterService clusterService, MetaDataCreateIndexService createIndexService) {
-        super(settings, clusterService, createIndexService);
+    protected BlobStoreGateway(Settings settings, ThreadPool threadPool, ClusterService clusterService) {
+        super(settings, threadPool, clusterService);
     }
 
     protected void initialize(BlobStore blobStore, ClusterName clusterName, @Nullable ByteSizeValue defaultChunkSize) throws IOException {
@@ -65,6 +72,7 @@ public abstract class BlobStoreGateway extends SharedStorageGateway {
         this.basePath = BlobPath.cleanPath().add(clusterName.value());
         this.metaDataBlobContainer = blobStore.immutableBlobContainer(basePath.add("metadata"));
         this.currentIndex = findLatestIndex();
+        this.compress = componentSettings.getAsBoolean("compress", true);
         logger.debug("Latest metadata found at index [" + currentIndex + "]");
     }
 
@@ -137,7 +145,6 @@ public abstract class BlobStoreGateway extends SharedStorageGateway {
         XContentBuilder builder;
         try {
             builder = XContentFactory.contentBuilder(XContentType.JSON);
-            builder.prettyPrint();
             builder.startObject();
             MetaData.Builder.toXContent(metaData, builder, ToXContent.EMPTY_PARAMS);
             builder.endObject();
@@ -146,7 +153,15 @@ public abstract class BlobStoreGateway extends SharedStorageGateway {
         }
 
         try {
-            metaDataBlobContainer.writeBlob(newMetaData, new ByteArrayInputStream(builder.unsafeBytes(), 0, builder.unsafeBytesLength()), builder.unsafeBytesLength());
+            byte[] data = builder.unsafeBytes();
+            int size = builder.unsafeBytesLength();
+
+            if (compress) {
+                data = LZFEncoder.encode(data, size);
+                size = data.length;
+            }
+
+            metaDataBlobContainer.writeBlob(newMetaData, new ByteArrayInputStream(data, 0, size), size);
         } catch (IOException e) {
             throw new GatewayException("Failed to write metadata [" + newMetaData + "]", e);
         }
@@ -191,7 +206,13 @@ public abstract class BlobStoreGateway extends SharedStorageGateway {
     private MetaData readMetaData(byte[] data) throws IOException {
         XContentParser parser = null;
         try {
-            parser = XContentFactory.xContent(XContentType.JSON).createParser(data);
+            if (LZF.isCompressed(data)) {
+                BytesStreamInput siBytes = new BytesStreamInput(data);
+                LZFStreamInput siLzf = CachedStreamInput.cachedLzf(siBytes);
+                parser = XContentFactory.xContent(XContentType.JSON).createParser(siLzf);
+            } else {
+                parser = XContentFactory.xContent(XContentType.JSON).createParser(data);
+            }
             return MetaData.Builder.fromXContent(parser);
         } finally {
             if (parser != null) {

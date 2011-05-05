@@ -23,10 +23,9 @@ import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Streamable;
+import org.elasticsearch.common.io.stream.VoidStreamable;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.threadpool.ThreadPool;
-import org.elasticsearch.threadpool.cached.CachedThreadPool;
-import org.elasticsearch.timer.TimerService;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
@@ -45,7 +44,6 @@ import static org.hamcrest.Matchers.*;
 public abstract class AbstractSimpleTransportTests {
 
     protected ThreadPool threadPool;
-    protected TimerService timerService;
 
     protected TransportService serviceA;
     protected TransportService serviceB;
@@ -53,8 +51,7 @@ public abstract class AbstractSimpleTransportTests {
     protected DiscoveryNode serviceBNode;
 
     @BeforeMethod public void setUp() {
-        threadPool = new CachedThreadPool();
-        timerService = new TimerService(threadPool);
+        threadPool = new ThreadPool();
         build();
         serviceA.connectToNode(serviceBNode);
         serviceB.connectToNode(serviceANode);
@@ -75,8 +72,11 @@ public abstract class AbstractSimpleTransportTests {
                 return new StringMessage();
             }
 
+            @Override public String executor() {
+                return ThreadPool.Names.CACHED;
+            }
+
             @Override public void messageReceived(StringMessage request, TransportChannel channel) {
-                System.out.println("got message: " + request.message);
                 assertThat("moshe", equalTo(request.message));
                 try {
                     channel.sendResponse(new StringMessage("hello " + request.message));
@@ -93,8 +93,11 @@ public abstract class AbstractSimpleTransportTests {
                         return new StringMessage();
                     }
 
+                    @Override public String executor() {
+                        return ThreadPool.Names.CACHED;
+                    }
+
                     @Override public void handleResponse(StringMessage response) {
-                        System.out.println("got response: " + response.message);
                         assertThat("hello moshe", equalTo(response.message));
                     }
 
@@ -112,10 +115,56 @@ public abstract class AbstractSimpleTransportTests {
         }
 
         serviceA.removeHandler("sayHello");
-
-        System.out.println("after ...");
     }
 
+    @Test public void testVoidMessageCompressed() {
+        serviceA.registerHandler("sayHello", new BaseTransportRequestHandler<VoidStreamable>() {
+            @Override public VoidStreamable newInstance() {
+                return VoidStreamable.INSTANCE;
+            }
+
+            @Override public String executor() {
+                return ThreadPool.Names.CACHED;
+            }
+
+            @Override public void messageReceived(VoidStreamable request, TransportChannel channel) {
+                try {
+                    channel.sendResponse(VoidStreamable.INSTANCE, TransportResponseOptions.options().withCompress(true));
+                } catch (IOException e) {
+                    e.printStackTrace();
+                    assertThat(e.getMessage(), false, equalTo(true));
+                }
+            }
+        });
+
+        TransportFuture<VoidStreamable> res = serviceB.submitRequest(serviceANode, "sayHello",
+                VoidStreamable.INSTANCE, TransportRequestOptions.options().withCompress(true), new BaseTransportResponseHandler<VoidStreamable>() {
+                    @Override public VoidStreamable newInstance() {
+                        return VoidStreamable.INSTANCE;
+                    }
+
+                    @Override public String executor() {
+                        return ThreadPool.Names.CACHED;
+                    }
+
+                    @Override public void handleResponse(VoidStreamable response) {
+                    }
+
+                    @Override public void handleException(TransportException exp) {
+                        exp.printStackTrace();
+                        assertThat("got exception instead of a response: " + exp.getMessage(), false, equalTo(true));
+                    }
+                });
+
+        try {
+            VoidStreamable message = res.get();
+            assertThat(message, notNullValue());
+        } catch (Exception e) {
+            assertThat(e.getMessage(), false, equalTo(true));
+        }
+
+        serviceA.removeHandler("sayHello");
+    }
 
     @Test public void testHelloWorldCompressed() {
         serviceA.registerHandler("sayHello", new BaseTransportRequestHandler<StringMessage>() {
@@ -123,11 +172,14 @@ public abstract class AbstractSimpleTransportTests {
                 return new StringMessage();
             }
 
+            @Override public String executor() {
+                return ThreadPool.Names.CACHED;
+            }
+
             @Override public void messageReceived(StringMessage request, TransportChannel channel) {
-                System.out.println("got message: " + request.message);
                 assertThat("moshe", equalTo(request.message));
                 try {
-                    channel.sendResponse(new StringMessage("hello " + request.message), TransportResponseOptions.options().withCompress());
+                    channel.sendResponse(new StringMessage("hello " + request.message), TransportResponseOptions.options().withCompress(true));
                 } catch (IOException e) {
                     e.printStackTrace();
                     assertThat(e.getMessage(), false, equalTo(true));
@@ -141,8 +193,11 @@ public abstract class AbstractSimpleTransportTests {
                         return new StringMessage();
                     }
 
+                    @Override public String executor() {
+                        return ThreadPool.Names.CACHED;
+                    }
+
                     @Override public void handleResponse(StringMessage response) {
-                        System.out.println("got response: " + response.message);
                         assertThat("hello moshe", equalTo(response.message));
                     }
 
@@ -160,8 +215,6 @@ public abstract class AbstractSimpleTransportTests {
         }
 
         serviceA.removeHandler("sayHello");
-
-        System.out.println("after ...");
     }
 
     @Test public void testErrorMessage() {
@@ -170,8 +223,11 @@ public abstract class AbstractSimpleTransportTests {
                 return new StringMessage();
             }
 
+            @Override public String executor() {
+                return ThreadPool.Names.CACHED;
+            }
+
             @Override public void messageReceived(StringMessage request, TransportChannel channel) throws Exception {
-                System.out.println("got message: " + request.message);
                 assertThat("moshe", equalTo(request.message));
                 throw new RuntimeException("bad message !!!");
             }
@@ -181,6 +237,10 @@ public abstract class AbstractSimpleTransportTests {
                 new StringMessage("moshe"), new BaseTransportResponseHandler<StringMessage>() {
                     @Override public StringMessage newInstance() {
                         return new StringMessage();
+                    }
+
+                    @Override public String executor() {
+                        return ThreadPool.Names.CACHED;
                     }
 
                     @Override public void handleResponse(StringMessage response) {
@@ -200,9 +260,6 @@ public abstract class AbstractSimpleTransportTests {
         }
 
         serviceA.removeHandler("sayHelloException");
-
-        System.out.println("after ...");
-
     }
 
     @Test
@@ -228,8 +285,11 @@ public abstract class AbstractSimpleTransportTests {
                 return new StringMessage();
             }
 
+            @Override public String executor() {
+                return ThreadPool.Names.CACHED;
+            }
+
             @Override public void messageReceived(StringMessage request, TransportChannel channel) {
-                System.out.println("got message: " + request.message);
                 assertThat("moshe", equalTo(request.message));
                 // don't send back a response
 //                try {
@@ -245,6 +305,10 @@ public abstract class AbstractSimpleTransportTests {
                 new StringMessage("moshe"), options().withTimeout(100), new BaseTransportResponseHandler<StringMessage>() {
                     @Override public StringMessage newInstance() {
                         return new StringMessage();
+                    }
+
+                    @Override public String executor() {
+                        return ThreadPool.Names.CACHED;
                     }
 
                     @Override public void handleResponse(StringMessage response) {
@@ -264,8 +328,6 @@ public abstract class AbstractSimpleTransportTests {
         }
 
         serviceA.removeHandler("sayHelloTimeoutNoResponse");
-
-        System.out.println("after ...");
     }
 
     @Test public void testTimeoutSendExceptionWithDelayedResponse() throws Exception {
@@ -274,8 +336,11 @@ public abstract class AbstractSimpleTransportTests {
                 return new StringMessage();
             }
 
+            @Override public String executor() {
+                return ThreadPool.Names.CACHED;
+            }
+
             @Override public void messageReceived(StringMessage request, TransportChannel channel) {
-                System.out.println("got message: " + request.message);
                 TimeValue sleep = TimeValue.parseTimeValue(request.message, null);
                 try {
                     Thread.sleep(sleep.millis());
@@ -295,6 +360,10 @@ public abstract class AbstractSimpleTransportTests {
                 new StringMessage("300ms"), options().withTimeout(100), new BaseTransportResponseHandler<StringMessage>() {
                     @Override public StringMessage newInstance() {
                         return new StringMessage();
+                    }
+
+                    @Override public String executor() {
+                        return ThreadPool.Names.CACHED;
                     }
 
                     @Override public void handleResponse(StringMessage response) {
@@ -325,8 +394,11 @@ public abstract class AbstractSimpleTransportTests {
                             return new StringMessage();
                         }
 
+                        @Override public String executor() {
+                            return ThreadPool.Names.CACHED;
+                        }
+
                         @Override public void handleResponse(StringMessage response) {
-                            System.out.println("got response: " + response.message);
                             assertThat("hello " + counter + "ms", equalTo(response.message));
                         }
 
@@ -341,8 +413,6 @@ public abstract class AbstractSimpleTransportTests {
         }
 
         serviceA.removeHandler("sayHelloTimeoutDelayedResponse");
-
-        System.out.println("after ...");
     }
 
     private class StringMessage implements Streamable {

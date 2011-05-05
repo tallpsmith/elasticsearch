@@ -26,5 +26,7 @@ import org.apache.lucene.document.Document;
  */
 public interface IdFieldMapper extends FieldMapper<String>, InternalMapper {
 
+    public static final String NAME = "_id";
+
     String value(Document document);
 }

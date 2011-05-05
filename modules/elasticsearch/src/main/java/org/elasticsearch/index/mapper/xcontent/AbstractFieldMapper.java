@@ -33,6 +33,7 @@ import org.elasticsearch.index.mapper.FieldMapper;
 import org.elasticsearch.index.mapper.FieldMapperListener;
 import org.elasticsearch.index.mapper.MapperParsingException;
 import org.elasticsearch.index.mapper.MergeMappingException;
+import org.elasticsearch.index.query.xcontent.QueryParseContext;
 
 import java.io.IOException;
 
@@ -316,7 +317,7 @@ public abstract class AbstractFieldMapper<T> implements FieldMapper<T>, XContent
         return false;
     }
 
-    @Override public Query fieldQuery(String value) {
+    @Override public Query fieldQuery(String value, QueryParseContext context) {
         return new TermQuery(new Term(names.indexName(), indexedValue(value)));
     }
 
@@ -388,10 +389,11 @@ public abstract class AbstractFieldMapper<T> implements FieldMapper<T>, XContent
         return FieldDataType.DefaultTypes.STRING;
     }
 
-    @Override public void toXContent(XContentBuilder builder, Params params) throws IOException {
+    @Override public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject(names.name());
         doXContentBody(builder);
         builder.endObject();
+        return builder;
     }
 
     protected void doXContentBody(XContentBuilder builder) throws IOException {
@@ -416,4 +418,9 @@ public abstract class AbstractFieldMapper<T> implements FieldMapper<T>, XContent
     }
 
     protected abstract String contentType();
+
+    @Override public void close() {
+        // nothing to do here, sub classes to override if needed
+    }
+
 }

@@ -29,8 +29,6 @@ import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.discovery.zen.DiscoveryNodesProvider;
 import org.elasticsearch.discovery.zen.ping.ZenPing;
 import org.elasticsearch.threadpool.ThreadPool;
-import org.elasticsearch.threadpool.cached.CachedThreadPool;
-import org.elasticsearch.timer.TimerService;
 import org.elasticsearch.transport.TransportService;
 import org.elasticsearch.transport.netty.NettyTransport;
 import org.testng.annotations.Test;
@@ -44,17 +42,16 @@ import static org.hamcrest.Matchers.*;
 public class UnicastZenPingTests {
 
     @Test public void testSimplePings() {
-        ThreadPool threadPool = new CachedThreadPool();
-        TimerService timerService = new TimerService(threadPool);
+        ThreadPool threadPool = new ThreadPool();
         ClusterName clusterName = new ClusterName("test");
         NettyTransport transportA = new NettyTransport(threadPool);
-        final TransportService transportServiceA = new TransportService(transportA, threadPool, timerService).start();
+        final TransportService transportServiceA = new TransportService(transportA, threadPool).start();
         final DiscoveryNode nodeA = new DiscoveryNode("A", transportServiceA.boundAddress().publishAddress());
 
         InetSocketTransportAddress addressA = (InetSocketTransportAddress) transportA.boundAddress().publishAddress();
 
         NettyTransport transportB = new NettyTransport(threadPool);
-        final TransportService transportServiceB = new TransportService(transportB, threadPool, timerService).start();
+        final TransportService transportServiceB = new TransportService(transportB, threadPool).start();
         final DiscoveryNode nodeB = new DiscoveryNode("B", transportServiceA.boundAddress().publishAddress());
 
         InetSocketTransportAddress addressB = (InetSocketTransportAddress) transportB.boundAddress().publishAddress();

@@ -19,6 +19,8 @@
 
 package org.elasticsearch.index.mapper.xcontent;
 
+import org.elasticsearch.common.Nullable;
+import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.mapper.xcontent.ip.IpFieldMapper;
 
 /**
@@ -31,7 +33,11 @@ public final class XContentMapperBuilders {
     }
 
     public static XContentDocumentMapper.Builder doc(String index, RootObjectMapper.Builder objectBuilder) {
-        return new XContentDocumentMapper.Builder(index, objectBuilder);
+        return new XContentDocumentMapper.Builder(index, null, objectBuilder);
+    }
+
+    public static XContentDocumentMapper.Builder doc(String index, @Nullable Settings settings, RootObjectMapper.Builder objectBuilder) {
+        return new XContentDocumentMapper.Builder(index, settings, objectBuilder);
     }
 
     public static SourceFieldMapper.Builder source() {
@@ -104,6 +110,10 @@ public final class XContentMapperBuilders {
 
     public static ShortFieldMapper.Builder shortField(String name) {
         return new ShortFieldMapper.Builder(name);
+    }
+
+    public static ByteFieldMapper.Builder byteField(String name) {
+        return new ByteFieldMapper.Builder(name);
     }
 
     public static IntegerFieldMapper.Builder integerField(String name) {

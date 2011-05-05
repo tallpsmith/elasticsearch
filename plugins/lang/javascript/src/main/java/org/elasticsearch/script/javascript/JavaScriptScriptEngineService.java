@@ -19,14 +19,19 @@
 
 package org.elasticsearch.script.javascript;
 
+import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.search.Scorer;
+import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.script.ExecutableScript;
 import org.elasticsearch.script.ScriptEngineService;
+import org.elasticsearch.script.SearchScript;
 import org.elasticsearch.script.javascript.support.NativeList;
 import org.elasticsearch.script.javascript.support.NativeMap;
 import org.elasticsearch.script.javascript.support.ScriptValueConverter;
+import org.elasticsearch.search.lookup.SearchLookup;
 import org.mozilla.javascript.*;
 
 import java.util.List;
@@ -101,6 +106,31 @@ public class JavaScriptScriptEngineService extends AbstractComponent implements 
         }
     }
 
+    @Override public SearchScript search(Object compiledScript, SearchLookup lookup, @Nullable Map<String, Object> vars) {
+        Context ctx = Context.enter();
+        try {
+            ctx.setWrapFactory(wrapFactory);
+
+            Scriptable scope = ctx.newObject(globalScope);
+            scope.setPrototype(globalScope);
+            scope.setParentScope(null);
+
+            for (Map.Entry<String, Object> entry : lookup.asMap().entrySet()) {
+                ScriptableObject.putProperty(scope, entry.getKey(), entry.getValue());
+            }
+
+            if (vars != null) {
+                for (Map.Entry<String, Object> entry : vars.entrySet()) {
+                    ScriptableObject.putProperty(scope, entry.getKey(), entry.getValue());
+                }
+            }
+
+            return new JavaScriptSearchScript((Script) compiledScript, scope, lookup);
+        } finally {
+            Context.exit();
+        }
+    }
+
     @Override public Object execute(Object compiledScript, Map<String, Object> vars) {
         Context ctx = Context.enter();
         ctx.setWrapFactory(wrapFactory);
@@ -149,17 +179,69 @@ public class JavaScriptScriptEngineService extends AbstractComponent implements 
             }
         }
 
-        @Override public Object run(Map<String, Object> vars) {
+        @Override public void setNextVar(String name, Object value) {
+            ScriptableObject.putProperty(scope, name, value);
+        }
+
+        @Override public Object unwrap(Object value) {
+            return ScriptValueConverter.unwrapValue(value);
+        }
+    }
+
+    public static class JavaScriptSearchScript implements SearchScript {
+
+        private final Script script;
+
+        private final Scriptable scope;
+
+        private final SearchLookup lookup;
+
+        public JavaScriptSearchScript(Script script, Scriptable scope, SearchLookup lookup) {
+            this.script = script;
+            this.scope = scope;
+            this.lookup = lookup;
+        }
+
+        @Override public void setScorer(Scorer scorer) {
+            lookup.setScorer(scorer);
+        }
+
+        @Override public void setNextReader(IndexReader reader) {
+            lookup.setNextReader(reader);
+        }
+
+        @Override public void setNextDocId(int doc) {
+            lookup.setNextDocId(doc);
+        }
+
+        @Override public void setNextScore(float score) {
+            ScriptableObject.putProperty(scope, "_score", score);
+        }
+
+        @Override public void setNextVar(String name, Object value) {
+            ScriptableObject.putProperty(scope, name, value);
+        }
+
+        @Override public Object run() {
             Context ctx = Context.enter();
             try {
                 ctx.setWrapFactory(wrapFactory);
-                for (Map.Entry<String, Object> entry : vars.entrySet()) {
-                    ScriptableObject.putProperty(scope, entry.getKey(), entry.getValue());
-                }
                 return ScriptValueConverter.unwrapValue(script.exec(ctx, scope));
             } finally {
                 Context.exit();
             }
+        }
+
+        @Override public float runAsFloat() {
+            return ((Number) run()).floatValue();
+        }
+
+        @Override public long runAsLong() {
+            return ((Number) run()).longValue();
+        }
+
+        @Override public double runAsDouble() {
+            return ((Number) run()).doubleValue();
         }
 
         @Override public Object unwrap(Object value) {

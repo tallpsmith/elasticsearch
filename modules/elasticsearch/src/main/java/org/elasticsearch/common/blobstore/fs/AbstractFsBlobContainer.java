@@ -25,6 +25,7 @@ import org.elasticsearch.common.blobstore.support.AbstractBlobContainer;
 import org.elasticsearch.common.blobstore.support.PlainBlobMetaData;
 import org.elasticsearch.common.collect.ImmutableMap;
 import org.elasticsearch.common.collect.MapBuilder;
+import org.elasticsearch.common.io.Closeables;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -77,10 +78,11 @@ public abstract class AbstractFsBlobContainer extends AbstractBlobContainer {
         blobStore.executor().execute(new Runnable() {
             @Override public void run() {
                 byte[] buffer = new byte[blobStore.bufferSizeInBytes()];
-                FileInputStream is;
+                FileInputStream is = null;
                 try {
                     is = new FileInputStream(new File(path, blobName));
                 } catch (FileNotFoundException e) {
+                    Closeables.closeQuietly(is);
                     listener.onFailure(e);
                     return;
                 }
@@ -91,11 +93,7 @@ public abstract class AbstractFsBlobContainer extends AbstractBlobContainer {
                     }
                     listener.onCompleted();
                 } catch (Exception e) {
-                    try {
-                        is.close();
-                    } catch (IOException e1) {
-                        // ignore
-                    }
+                    Closeables.closeQuietly(is);
                     listener.onFailure(e);
                 }
             }

@@ -35,6 +35,8 @@ import org.elasticsearch.action.get.GetResponse;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.index.IndexResponse;
 import org.elasticsearch.action.mlt.MoreLikeThisRequest;
+import org.elasticsearch.action.percolate.PercolateRequest;
+import org.elasticsearch.action.percolate.PercolateResponse;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.search.SearchScrollRequest;
@@ -44,10 +46,12 @@ import org.elasticsearch.client.transport.action.ClientTransportActionModule;
 import org.elasticsearch.client.transport.support.InternalTransportClient;
 import org.elasticsearch.cluster.ClusterNameModule;
 import org.elasticsearch.cluster.node.DiscoveryNode;
+import org.elasticsearch.common.CacheRecycler;
 import org.elasticsearch.common.collect.ImmutableList;
 import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.common.inject.Injector;
 import org.elasticsearch.common.inject.ModulesBuilder;
+import org.elasticsearch.common.io.CachedStreams;
 import org.elasticsearch.common.network.NetworkModule;
 import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.settings.Settings;
@@ -58,10 +62,9 @@ import org.elasticsearch.env.Environment;
 import org.elasticsearch.env.EnvironmentModule;
 import org.elasticsearch.monitor.MonitorService;
 import org.elasticsearch.node.internal.InternalSettingsPerparer;
+import org.elasticsearch.search.TransportSearchModule;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.threadpool.ThreadPoolModule;
-import org.elasticsearch.timer.TimerModule;
-import org.elasticsearch.timer.TimerService;
 import org.elasticsearch.transport.TransportModule;
 import org.elasticsearch.transport.TransportService;
 
@@ -109,6 +112,27 @@ public class TransportClient extends AbstractClient {
     }
 
     /**
+     * Constructs a new transport client with explicit settings and settings loaded either from the classpath or the file
+     * system (the <tt>elasticsearch.(yml|json)</tt> files optionally prefixed with <tt>config/</tt>).
+     */
+    public TransportClient(Settings.Builder settings) {
+        this(settings.build(), true);
+    }
+
+    /**
+     * Constructs a new transport client with the provided settings and the ability to control if settings will
+     * be loaded from the classpath / file system (the <tt>elasticsearch.(yml|json)</tt> files optionally prefixed with
+     * <tt>config/</tt>).
+     *
+     * @param settings           The explicit settings.
+     * @param loadConfigSettings <tt>true</tt> if settings should be loaded from the classpath/file system.
+     * @throws ElasticSearchException
+     */
+    public TransportClient(Settings.Builder settings, boolean loadConfigSettings) throws ElasticSearchException {
+        this(settings.build(), loadConfigSettings);
+    }
+
+    /**
      * Constructs a new transport client with the provided settings and the ability to control if settings will
      * be loaded from the classpath / file system (the <tt>elasticsearch.(yml|json)</tt> files optionally prefixed with
      * <tt>config/</tt>).
@@ -130,8 +154,8 @@ public class TransportClient extends AbstractClient {
         modules.add(new SettingsModule(settings));
         modules.add(new NetworkModule());
         modules.add(new ClusterNameModule(settings));
-        modules.add(new TimerModule());
         modules.add(new ThreadPoolModule(settings));
+        modules.add(new TransportSearchModule());
         modules.add(new TransportModule(settings));
         modules.add(new ClientTransportActionModule());
         modules.add(new ClientTransportModule());
@@ -195,7 +219,6 @@ public class TransportClient extends AbstractClient {
             // ignore, might not be bounded
         }
 
-        injector.getInstance(TimerService.class).close();
         injector.getInstance(ThreadPool.class).shutdown();
         try {
             injector.getInstance(ThreadPool.class).awaitTermination(10, TimeUnit.SECONDS);
@@ -208,6 +231,8 @@ public class TransportClient extends AbstractClient {
             // ignore
         }
 
+        CacheRecycler.clear();
+        CachedStreams.clear();
         ThreadLocals.clearReferencesThreadLocals();
     }
 
@@ -289,5 +314,13 @@ public class TransportClient extends AbstractClient {
 
     @Override public void moreLikeThis(MoreLikeThisRequest request, ActionListener<SearchResponse> listener) {
         internalClient.moreLikeThis(request, listener);
+    }
+
+    @Override public ActionFuture<PercolateResponse> percolate(PercolateRequest request) {
+        return internalClient.percolate(request);
+    }
+
+    @Override public void percolate(PercolateRequest request, ActionListener<PercolateResponse> listener) {
+        internalClient.percolate(request, listener);
     }
 }

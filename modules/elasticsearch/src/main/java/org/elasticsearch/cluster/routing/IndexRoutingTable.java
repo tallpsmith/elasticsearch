@@ -102,6 +102,30 @@ public class IndexRoutingTable implements Iterable<IndexShardRoutingTable> {
         return shards.values().iterator();
     }
 
+    public int numberOfNodesShardsAreAllocatedOn(String... excludedNodes) {
+        Set<String> nodes = Sets.newHashSet();
+        for (IndexShardRoutingTable shardRoutingTable : this) {
+            for (ShardRouting shardRouting : shardRoutingTable) {
+                if (shardRouting.assignedToNode()) {
+                    String currentNodeId = shardRouting.currentNodeId();
+                    boolean excluded = false;
+                    if (excludedNodes != null) {
+                        for (String excludedNode : excludedNodes) {
+                            if (currentNodeId.equals(excludedNode)) {
+                                excluded = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!excluded) {
+                        nodes.add(currentNodeId);
+                    }
+                }
+            }
+        }
+        return nodes.size();
+    }
+
     public ImmutableMap<Integer, IndexShardRoutingTable> shards() {
         return shards;
     }
@@ -153,7 +177,7 @@ public class IndexRoutingTable implements Iterable<IndexShardRoutingTable> {
     /**
      * An iterator over all shards (including replicas).
      */
-    public ShardsIterator allShardsIt() {
+    public ShardsIterator randomAllShardsIt() {
         return new PlainShardsIterator(allShards, Math.abs(counter.incrementAndGet()));
     }
 

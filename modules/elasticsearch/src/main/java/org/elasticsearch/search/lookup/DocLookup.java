@@ -20,11 +20,14 @@
 package org.elasticsearch.search.lookup;
 
 import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.search.Scorer;
 import org.elasticsearch.ElasticSearchException;
 import org.elasticsearch.ElasticSearchIllegalArgumentException;
 import org.elasticsearch.common.collect.Maps;
 import org.elasticsearch.index.cache.field.data.FieldDataCache;
+import org.elasticsearch.index.field.data.DocFieldData;
 import org.elasticsearch.index.field.data.FieldData;
+import org.elasticsearch.index.field.data.NumericDocFieldData;
 import org.elasticsearch.index.mapper.FieldMapper;
 import org.elasticsearch.index.mapper.MapperService;
 
@@ -46,6 +49,8 @@ public class DocLookup implements Map {
 
     private IndexReader reader;
 
+    private Scorer scorer;
+
     private int docId = -1;
 
     DocLookup(MapperService mapperService, FieldDataCache fieldDataCache) {
@@ -62,8 +67,28 @@ public class DocLookup implements Map {
         localCacheFieldData.clear();
     }
 
+    public void setScorer(Scorer scorer) {
+        this.scorer = scorer;
+    }
+
     public void setNextDocId(int docId) {
         this.docId = docId;
+    }
+
+    public <T extends DocFieldData> T field(String key) {
+        return (T) get(key);
+    }
+
+    public <T extends NumericDocFieldData> T numeric(String key) {
+        return (T) get(key);
+    }
+
+    public float score() throws IOException {
+        return scorer.score();
+    }
+
+    public float getScore() throws IOException {
+        return scorer.score();
     }
 
     @Override public Object get(Object key) {

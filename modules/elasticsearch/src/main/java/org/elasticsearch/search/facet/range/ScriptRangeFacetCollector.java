@@ -20,9 +20,10 @@
 package org.elasticsearch.search.facet.range;
 
 import org.apache.lucene.index.IndexReader;
-import org.elasticsearch.script.search.SearchScript;
+import org.apache.lucene.search.Scorer;
+import org.elasticsearch.script.SearchScript;
+import org.elasticsearch.search.facet.AbstractFacetCollector;
 import org.elasticsearch.search.facet.Facet;
-import org.elasticsearch.search.facet.support.AbstractFacetCollector;
 import org.elasticsearch.search.internal.SearchContext;
 
 import java.io.IOException;
@@ -41,9 +42,14 @@ public class ScriptRangeFacetCollector extends AbstractFacetCollector {
 
     public ScriptRangeFacetCollector(String facetName, String scriptLang, String keyScript, String valueScript, Map<String, Object> params, RangeFacet.Entry[] entries, SearchContext context) {
         super(facetName);
-        this.keyScript = new SearchScript(context.lookup(), scriptLang, keyScript, params, context.scriptService());
-        this.valueScript = new SearchScript(context.lookup(), scriptLang, valueScript, params, context.scriptService());
+        this.keyScript = context.scriptService().search(context.lookup(), scriptLang, keyScript, params);
+        this.valueScript = context.scriptService().search(context.lookup(), scriptLang, valueScript, params);
         this.entries = entries;
+    }
+
+    @Override public void setScorer(Scorer scorer) throws IOException {
+        keyScript.setScorer(scorer);
+        valueScript.setScorer(scorer);
     }
 
     @Override protected void doSetNextReader(IndexReader reader, int docBase) throws IOException {
@@ -52,18 +58,27 @@ public class ScriptRangeFacetCollector extends AbstractFacetCollector {
     }
 
     @Override protected void doCollect(int doc) throws IOException {
-        double key = ((Number) keyScript.execute(doc)).doubleValue();
-        double value = ((Number) valueScript.execute(doc)).doubleValue();
+        keyScript.setNextDocId(doc);
+        valueScript.setNextDocId(doc);
+        double key = keyScript.runAsDouble();
+        double value = valueScript.runAsDouble();
 
         for (RangeFacet.Entry entry : entries) {
             if (key >= entry.getFrom() && key < entry.getTo()) {
                 entry.count++;
+                entry.totalCount++;
                 entry.total += value;
+                if (value < entry.min) {
+                    entry.min = value;
+                }
+                if (value > entry.max) {
+                    entry.max = value;
+                }
             }
         }
     }
 
     @Override public Facet facet() {
-        return new InternalRangeFacet(facetName, "_na", "_na", entries);
+        return new InternalRangeFacet(facetName, entries);
     }
 }

@@ -37,6 +37,10 @@ public abstract class AbstractRestRequest implements RestRequest {
 
     private static final Pattern commaPattern = Pattern.compile(",");
 
+    @Override public final String path() {
+        return RestUtils.decodeComponent(rawPath());
+    }
+
     @Override public float paramAsFloat(String key, float defaultValue) {
         String sValue = param(key);
         if (sValue == null) {
@@ -56,6 +60,18 @@ public abstract class AbstractRestRequest implements RestRequest {
         }
         try {
             return Integer.parseInt(sValue);
+        } catch (NumberFormatException e) {
+            throw new ElasticSearchIllegalArgumentException("Failed to parse int parameter [" + key + "] with value [" + sValue + "]", e);
+        }
+    }
+
+    @Override public long paramAsLong(String key, long defaultValue) {
+        String sValue = param(key);
+        if (sValue == null) {
+            return defaultValue;
+        }
+        try {
+            return Long.parseLong(sValue);
         } catch (NumberFormatException e) {
             throw new ElasticSearchIllegalArgumentException("Failed to parse int parameter [" + key + "] with value [" + sValue + "]", e);
         }

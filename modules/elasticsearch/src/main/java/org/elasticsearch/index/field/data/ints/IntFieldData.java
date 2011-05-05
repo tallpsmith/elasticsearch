@@ -21,7 +21,8 @@ package org.elasticsearch.index.field.data.ints;
 
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.search.FieldCache;
-import org.elasticsearch.common.trove.TIntArrayList;
+import org.elasticsearch.common.RamUsage;
+import org.elasticsearch.common.trove.list.array.TIntArrayList;
 import org.elasticsearch.index.field.data.FieldDataType;
 import org.elasticsearch.index.field.data.NumericFieldData;
 import org.elasticsearch.index.field.data.support.FieldDataLoader;
@@ -40,6 +41,14 @@ public abstract class IntFieldData extends NumericFieldData<IntDocFieldData> {
     protected IntFieldData(String fieldName, int[] values) {
         super(fieldName);
         this.values = values;
+    }
+
+    @Override protected long computeSizeInBytes() {
+        return RamUsage.NUM_BYTES_INT * values.length + RamUsage.NUM_BYTES_ARRAY_HEADER;
+    }
+
+    public final int[] values() {
+        return this.values;
     }
 
     abstract public int value(int docId);
@@ -102,6 +111,13 @@ public abstract class IntFieldData extends NumericFieldData<IntDocFieldData> {
         void onValue(int value);
     }
 
+    public abstract void forEachValueInDoc(int docId, ValueInDocProc proc);
+
+    public static interface ValueInDocProc {
+        void onValue(int docId, int value);
+
+        void onMissing(int docId);
+    }
 
     public static IntFieldData load(IndexReader reader, String field) throws IOException {
         return FieldDataLoader.load(reader, field, new IntTypeLoader());
@@ -122,11 +138,11 @@ public abstract class IntFieldData extends NumericFieldData<IntDocFieldData> {
         }
 
         @Override public IntFieldData buildSingleValue(String field, int[] ordinals) {
-            return new SingleValueIntFieldData(field, ordinals, terms.toNativeArray());
+            return new SingleValueIntFieldData(field, ordinals, terms.toArray());
         }
 
         @Override public IntFieldData buildMultiValue(String field, int[][] ordinals) {
-            return new MultiValueIntFieldData(field, ordinals, terms.toNativeArray());
+            return new MultiValueIntFieldData(field, ordinals, terms.toArray());
         }
     }
 }

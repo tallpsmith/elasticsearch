@@ -26,11 +26,12 @@ import org.elasticsearch.action.index.IndexResponse;
 import org.elasticsearch.action.support.replication.ReplicationType;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.client.action.support.BaseRequestBuilder;
+import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentType;
+import org.elasticsearch.index.VersionType;
 
-import javax.annotation.Nullable;
 import java.util.Map;
 
 /**
@@ -272,6 +273,33 @@ public class IndexRequestBuilder extends BaseRequestBuilder<IndexRequest, IndexR
      */
     public IndexRequestBuilder setReplicationType(String replicationType) {
         request.replicationType(replicationType);
+        return this;
+    }
+
+    /**
+     * Sets the version, which will cause the index operation to only be performed if a matching
+     * version exists and no changes happened on the doc since then.
+     */
+    public IndexRequestBuilder setVersion(long version) {
+        request.version(version);
+        return this;
+    }
+
+    /**
+     * Sets the versioning type. Defaults to {@link VersionType#INTERNAL}.
+     */
+    public IndexRequestBuilder setVersionType(VersionType versionType) {
+        request.versionType(versionType);
+        return this;
+    }
+
+    /**
+     * Causes the index request document to be percolated. The parameter is the percolate query
+     * to use to reduce the percolated queries that are going to run against this doc. Can be
+     * set to <tt>*</tt> to indicate that all percolate queries should be run.
+     */
+    public IndexRequestBuilder setPercolate(String percolate) {
+        request.percolate(percolate);
         return this;
     }
 

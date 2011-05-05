@@ -56,6 +56,8 @@ public class ParseContext {
 
     private String id;
 
+    private boolean flyweight;
+
     private DocumentMapper.ParseListener listener;
 
     private String uid;
@@ -81,7 +83,7 @@ public class ParseContext {
         this.path = path;
     }
 
-    public void reset(XContentParser parser, Document document, String type, byte[] source, DocumentMapper.ParseListener listener) {
+    public void reset(XContentParser parser, Document document, String type, byte[] source, boolean flyweight, DocumentMapper.ParseListener listener) {
         this.parser = parser;
         this.document = document;
         this.analyzer = null;
@@ -89,12 +91,17 @@ public class ParseContext {
         this.id = null;
         this.type = type;
         this.source = source;
+        this.flyweight = flyweight;
         this.path.reset();
         this.parsedIdState = ParsedIdState.NO;
         this.mappersAdded = false;
         this.listener = listener == null ? DocumentMapper.ParseListener.EMPTY : listener;
         this.allEntries = new AllEntries();
         this.ignoredValues.clear();
+    }
+
+    public boolean flyweight() {
+        return this.flyweight;
     }
 
     public XContentDocumentMapperParser docMapperParser() {
@@ -119,6 +126,11 @@ public class ParseContext {
 
     public byte[] source() {
         return this.source;
+    }
+
+    // only should be used by SourceFieldMapper to update with a compressed source
+    public void source(byte[] source) {
+        this.source = source;
     }
 
     public ContentPath path() {
@@ -185,6 +197,18 @@ public class ParseContext {
      */
     public void uid(String uid) {
         this.uid = uid;
+    }
+
+    /**
+     * Is all included or not. Will always disable it if {@link org.elasticsearch.index.mapper.AllFieldMapper#enabled()}
+     * is <tt>false</tt>. If its enabled, then will return <tt>true</tt> only if the specific flag is <tt>null</tt> or
+     * its actual value (so, if not set, defaults to "true").
+     */
+    public boolean includeInAll(Boolean specificIncludeInAll) {
+        if (!docMapper.allFieldMapper().enabled()) {
+            return false;
+        }
+        return specificIncludeInAll == null || specificIncludeInAll;
     }
 
     public AllEntries allEntries() {

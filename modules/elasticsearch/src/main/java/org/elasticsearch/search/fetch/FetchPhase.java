@@ -25,13 +25,16 @@ import org.apache.lucene.document.Fieldable;
 import org.apache.lucene.index.IndexReader;
 import org.elasticsearch.common.collect.ImmutableMap;
 import org.elasticsearch.common.inject.Inject;
+import org.elasticsearch.index.Index;
 import org.elasticsearch.index.mapper.*;
+import org.elasticsearch.indices.TypeMissingException;
 import org.elasticsearch.search.SearchHitField;
 import org.elasticsearch.search.SearchParseElement;
 import org.elasticsearch.search.SearchPhase;
 import org.elasticsearch.search.fetch.explain.ExplainSearchHitPhase;
 import org.elasticsearch.search.fetch.matchedfilters.MatchedFiltersSearchHitPhase;
 import org.elasticsearch.search.fetch.script.ScriptFieldsSearchHitPhase;
+import org.elasticsearch.search.fetch.version.VersionSearchHitPhase;
 import org.elasticsearch.search.highlight.HighlightPhase;
 import org.elasticsearch.search.internal.InternalSearchHit;
 import org.elasticsearch.search.internal.InternalSearchHitField;
@@ -51,8 +54,8 @@ public class FetchPhase implements SearchPhase {
     private final SearchHitPhase[] hitPhases;
 
     @Inject public FetchPhase(HighlightPhase highlightPhase, ScriptFieldsSearchHitPhase scriptFieldsPhase,
-                              MatchedFiltersSearchHitPhase matchFiltersPhase, ExplainSearchHitPhase explainPhase) {
-        this.hitPhases = new SearchHitPhase[]{scriptFieldsPhase, matchFiltersPhase, explainPhase, highlightPhase};
+                              MatchedFiltersSearchHitPhase matchFiltersPhase, ExplainSearchHitPhase explainPhase, VersionSearchHitPhase versionPhase) {
+        this.hitPhases = new SearchHitPhase[]{scriptFieldsPhase, matchFiltersPhase, explainPhase, highlightPhase, versionPhase};
     }
 
     @Override public Map<String, ? extends SearchParseElement> parseElements() {
@@ -76,9 +79,15 @@ public class FetchPhase implements SearchPhase {
             Document doc = loadDocument(context, fieldSelector, docId);
             Uid uid = extractUid(context, doc);
 
-            DocumentMapper documentMapper = context.mapperService().type(uid.type());
+            DocumentMapper documentMapper = context.mapperService().documentMapper(uid.type());
+
+            if (documentMapper == null) {
+                throw new TypeMissingException(new Index(context.shardTarget().index()), uid.type(), "failed to find type loaded for doc [" + uid.id() + "]");
+            }
 
             byte[] source = extractSource(doc, documentMapper);
+
+            // get the version
 
             InternalSearchHit searchHit = new InternalSearchHit(docId, uid.id(), uid.type(), source, null);
             hits[index] = searchHit;
@@ -126,22 +135,14 @@ public class FetchPhase implements SearchPhase {
                 hitField.values().add(value);
             }
 
-            boolean hitPhaseExecutionRequired = false;
+            int readerIndex = context.searcher().readerIndex(docId);
+            IndexReader subReader = context.searcher().subReaders()[readerIndex];
+            int subDoc = docId - context.searcher().docStarts()[readerIndex];
             for (SearchHitPhase hitPhase : hitPhases) {
+                SearchHitPhase.HitContext hitContext = new SearchHitPhase.HitContext();
                 if (hitPhase.executionNeeded(context)) {
-                    hitPhaseExecutionRequired = true;
-                    break;
-                }
-            }
-
-            if (hitPhaseExecutionRequired) {
-                int readerIndex = context.searcher().readerIndex(docId);
-                IndexReader subReader = context.searcher().subReaders()[readerIndex];
-                int subDoc = docId - context.searcher().docStarts()[readerIndex];
-                for (SearchHitPhase hitPhase : hitPhases) {
-                    if (hitPhase.executionNeeded(context)) {
-                        hitPhase.execute(context, searchHit, uid, subReader, subDoc);
-                    }
+                    hitContext.reset(searchHit, subReader, subDoc, doc);
+                    hitPhase.execute(context, hitContext);
                 }
             }
         }
@@ -189,15 +190,16 @@ public class FetchPhase implements SearchPhase {
         }
 
         // asked for all stored fields, just return null so all of them will be loaded
+        // don't load the source field in this case, makes little sense to get it with all stored fields
         if (context.fieldNames().get(0).equals("*")) {
-            return null;
+            return AllButSourceFieldSelector.INSTANCE;
         }
 
         FieldMappersFieldSelector fieldSelector = new FieldMappersFieldSelector();
         for (String fieldName : context.fieldNames()) {
             FieldMappers x = context.mapperService().smartNameFieldMappers(fieldName);
             if (x == null) {
-                throw new FetchPhaseExecutionException(context, "No mapping for field [" + fieldName + "]");
+                throw new FetchPhaseExecutionException(context, "No mapping for field [" + fieldName + "] in order to load it");
             }
             fieldSelector.add(x);
         }

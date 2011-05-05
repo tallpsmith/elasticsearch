@@ -19,6 +19,7 @@
 
 package org.elasticsearch.index.field.data.strings;
 
+import org.elasticsearch.common.RamUsage;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.thread.ThreadLocals;
 
@@ -41,12 +42,17 @@ public class SingleValueStringFieldData extends StringFieldData {
         this.ordinals = ordinals;
     }
 
+    @Override protected long computeSizeInBytes() {
+        return super.computeSizeInBytes() +
+                RamUsage.NUM_BYTES_INT * ordinals.length + RamUsage.NUM_BYTES_ARRAY_HEADER;
+    }
+
     int[] ordinals() {
         return ordinals;
     }
 
-    String[] values() {
-        return this.values;
+    @Override public void forEachOrdinalInDoc(int docId, OrdinalInDocProc proc) {
+        proc.onOrdinal(docId, ordinals[docId]);
     }
 
     @Override public boolean multiValued() {
@@ -60,6 +66,7 @@ public class SingleValueStringFieldData extends StringFieldData {
     @Override public void forEachValueInDoc(int docId, StringValueInDocProc proc) {
         int loc = ordinals[docId];
         if (loc == 0) {
+            proc.onMissing(docId);
             return;
         }
         proc.onValue(docId, values[loc]);

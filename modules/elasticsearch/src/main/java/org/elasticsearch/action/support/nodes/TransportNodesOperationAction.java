@@ -45,22 +45,27 @@ public abstract class TransportNodesOperationAction<Request extends NodesOperati
 
     protected final ClusterName clusterName;
 
-    protected final ThreadPool threadPool;
-
     protected final ClusterService clusterService;
 
     protected final TransportService transportService;
 
+    final String transportAction;
+    final String transportNodeAction;
+    final String executor;
+
     @Inject public TransportNodesOperationAction(Settings settings, ClusterName clusterName, ThreadPool threadPool,
                                                  ClusterService clusterService, TransportService transportService) {
-        super(settings);
+        super(settings, threadPool);
         this.clusterName = clusterName;
-        this.threadPool = threadPool;
         this.clusterService = clusterService;
         this.transportService = transportService;
 
-        transportService.registerHandler(transportAction(), new TransportHandler());
-        transportService.registerHandler(transportNodeAction(), new NodeTransportHandler());
+        this.transportAction = transportAction();
+        this.transportNodeAction = transportNodeAction();
+        this.executor = executor();
+
+        transportService.registerHandler(transportAction, new TransportHandler());
+        transportService.registerHandler(transportNodeAction, new NodeTransportHandler());
     }
 
     @Override protected void doExecute(Request request, ActionListener<Response> listener) {
@@ -70,6 +75,12 @@ public abstract class TransportNodesOperationAction<Request extends NodesOperati
     protected abstract String transportAction();
 
     protected abstract String transportNodeAction();
+
+    protected boolean transportCompress() {
+        return false;
+    }
+
+    protected abstract String executor();
 
     protected abstract Request newRequest();
 
@@ -117,7 +128,7 @@ public abstract class TransportNodesOperationAction<Request extends NodesOperati
         private void start() {
             if (nodesIds.length == 0) {
                 // nothing to notify
-                threadPool.execute(new Runnable() {
+                threadPool.cached().execute(new Runnable() {
                     @Override public void run() {
                         listener.onResponse(newResponse(request, responses));
                     }
@@ -128,10 +139,11 @@ public abstract class TransportNodesOperationAction<Request extends NodesOperati
             if (request.timeout() != null) {
                 transportRequestOptions.withTimeout(request.timeout());
             }
+            transportRequestOptions.withCompress(transportCompress());
             for (final String nodeId : nodesIds) {
                 final DiscoveryNode node = clusterState.nodes().nodes().get(nodeId);
                 if (nodeId.equals("_local") || nodeId.equals(clusterState.nodes().localNodeId())) {
-                    threadPool.execute(new Runnable() {
+                    threadPool.executor(executor()).execute(new Runnable() {
                         @Override public void run() {
                             try {
                                 onOperation(nodeOperation(newNodeRequest(clusterState.nodes().localNodeId(), request)));
@@ -141,7 +153,7 @@ public abstract class TransportNodesOperationAction<Request extends NodesOperati
                         }
                     });
                 } else if (nodeId.equals("_master")) {
-                    threadPool.execute(new Runnable() {
+                    threadPool.executor(executor()).execute(new Runnable() {
                         @Override public void run() {
                             try {
                                 onOperation(nodeOperation(newNodeRequest(clusterState.nodes().masterNodeId(), request)));
@@ -155,7 +167,7 @@ public abstract class TransportNodesOperationAction<Request extends NodesOperati
                         onFailure(nodeId, new NoSuchNodeException(nodeId));
                     } else {
                         NodeRequest nodeRequest = newNodeRequest(nodeId, request);
-                        transportService.sendRequest(node, transportNodeAction(), nodeRequest, transportRequestOptions, new BaseTransportResponseHandler<NodeResponse>() {
+                        transportService.sendRequest(node, transportNodeAction, nodeRequest, transportRequestOptions, new BaseTransportResponseHandler<NodeResponse>() {
                             @Override public NodeResponse newInstance() {
                                 return newNodeResponse();
                             }
@@ -168,8 +180,8 @@ public abstract class TransportNodesOperationAction<Request extends NodesOperati
                                 onFailure(node.id(), exp);
                             }
 
-                            @Override public boolean spawn() {
-                                return false;
+                            @Override public String executor() {
+                                return ThreadPool.Names.SAME;
                             }
                         });
                     }
@@ -186,6 +198,9 @@ public abstract class TransportNodesOperationAction<Request extends NodesOperati
         }
 
         private void onFailure(String nodeId, Throwable t) {
+            if (logger.isDebugEnabled()) {
+                logger.debug("failed to execute on node [{}]", t, nodeId);
+            }
             int idx = index.getAndIncrement();
             if (accumulateExceptions()) {
                 responses.set(idx, new FailedNodeException(nodeId, "Failed node [" + nodeId + "]", t));
@@ -196,15 +211,7 @@ public abstract class TransportNodesOperationAction<Request extends NodesOperati
         }
 
         private void finishHim() {
-            if (request.listenerThreaded()) {
-                threadPool.execute(new Runnable() {
-                    @Override public void run() {
-                        listener.onResponse(newResponse(request, responses));
-                    }
-                });
-            } else {
-                listener.onResponse(newResponse(request, responses));
-            }
+            listener.onResponse(newResponse(request, responses));
         }
     }
 
@@ -218,8 +225,9 @@ public abstract class TransportNodesOperationAction<Request extends NodesOperati
             request.listenerThreaded(false);
             execute(request, new ActionListener<Response>() {
                 @Override public void onResponse(Response response) {
+                    TransportResponseOptions options = TransportResponseOptions.options().withCompress(transportCompress());
                     try {
-                        channel.sendResponse(response);
+                        channel.sendResponse(response, options);
                     } catch (Exception e) {
                         onFailure(e);
                     }
@@ -235,12 +243,12 @@ public abstract class TransportNodesOperationAction<Request extends NodesOperati
             });
         }
 
-        @Override public boolean spawn() {
-            return false;
+        @Override public String executor() {
+            return ThreadPool.Names.SAME;
         }
 
         @Override public String toString() {
-            return transportAction();
+            return transportAction;
         }
     }
 
@@ -250,12 +258,16 @@ public abstract class TransportNodesOperationAction<Request extends NodesOperati
             return newNodeRequest();
         }
 
-        @Override public void messageReceived(NodeRequest request, TransportChannel channel) throws Exception {
+        @Override public void messageReceived(final NodeRequest request, final TransportChannel channel) throws Exception {
             channel.sendResponse(nodeOperation(request));
         }
 
         @Override public String toString() {
-            return transportNodeAction();
+            return transportNodeAction;
+        }
+
+        @Override public String executor() {
+            return executor;
         }
     }
 }

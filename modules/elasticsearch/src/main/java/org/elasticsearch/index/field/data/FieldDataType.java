@@ -21,7 +21,9 @@ package org.elasticsearch.index.field.data;
 
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.search.FieldComparatorSource;
+import org.elasticsearch.common.Nullable;
 import org.elasticsearch.index.cache.field.data.FieldDataCache;
+import org.elasticsearch.index.field.data.bytes.ByteFieldDataType;
 import org.elasticsearch.index.field.data.doubles.DoubleFieldDataType;
 import org.elasticsearch.index.field.data.floats.FloatFieldDataType;
 import org.elasticsearch.index.field.data.ints.IntFieldDataType;
@@ -38,20 +40,15 @@ public interface FieldDataType<T extends FieldData> {
 
     public static final class DefaultTypes {
         public static final StringFieldDataType STRING = new StringFieldDataType();
+        public static final ByteFieldDataType BYTE = new ByteFieldDataType();
         public static final ShortFieldDataType SHORT = new ShortFieldDataType();
         public static final IntFieldDataType INT = new IntFieldDataType();
         public static final LongFieldDataType LONG = new LongFieldDataType();
         public static final FloatFieldDataType FLOAT = new FloatFieldDataType();
         public static final DoubleFieldDataType DOUBLE = new DoubleFieldDataType();
-
-        public static boolean isNumeric(FieldDataType type) {
-            return type == INT || type == LONG || type == FLOAT || type == DOUBLE;
-        }
     }
 
-    Class<T> fieldDataClass();
-
-    FieldComparatorSource newFieldComparatorSource(FieldDataCache cache);
+    FieldComparatorSource newFieldComparatorSource(FieldDataCache cache, @Nullable String missing);
 
     T load(IndexReader reader, String fieldName) throws IOException;
 }

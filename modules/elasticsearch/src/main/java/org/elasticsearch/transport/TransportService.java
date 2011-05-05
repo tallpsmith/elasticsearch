@@ -21,28 +21,26 @@ package org.elasticsearch.transport;
 
 import org.elasticsearch.ElasticSearchException;
 import org.elasticsearch.cluster.node.DiscoveryNode;
+import org.elasticsearch.common.collect.ImmutableMap;
+import org.elasticsearch.common.collect.MapBuilder;
 import org.elasticsearch.common.component.AbstractLifecycleComponent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.io.stream.Streamable;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.timer.Timeout;
-import org.elasticsearch.common.timer.TimerTask;
 import org.elasticsearch.common.transport.BoundTransportAddress;
 import org.elasticsearch.common.transport.TransportAddress;
 import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
 import org.elasticsearch.common.util.concurrent.ConcurrentMapLong;
 import org.elasticsearch.threadpool.ThreadPool;
-import org.elasticsearch.timer.TimerService;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.elasticsearch.common.settings.ImmutableSettings.Builder.*;
-import static org.elasticsearch.common.util.concurrent.ConcurrentCollections.*;
 
 /**
  * @author kimchy (shay.banon)
@@ -53,9 +51,8 @@ public class TransportService extends AbstractLifecycleComponent<TransportServic
 
     private final ThreadPool threadPool;
 
-    private final TimerService timerService;
-
-    final ConcurrentMap<String, TransportRequestHandler> serverHandlers = newConcurrentMap();
+    volatile ImmutableMap<String, TransportRequestHandler> serverHandlers = ImmutableMap.of();
+    final Object serverHandlersMutex = new Object();
 
     final ConcurrentMapLong<RequestHolder> clientHandlers = ConcurrentCollections.newConcurrentMapLong();
 
@@ -78,15 +75,14 @@ public class TransportService extends AbstractLifecycleComponent<TransportServic
 
     private boolean throwConnectException = false;
 
-    public TransportService(Transport transport, ThreadPool threadPool, TimerService timerService) {
-        this(EMPTY_SETTINGS, transport, threadPool, timerService);
+    public TransportService(Transport transport, ThreadPool threadPool) {
+        this(EMPTY_SETTINGS, transport, threadPool);
     }
 
-    @Inject public TransportService(Settings settings, Transport transport, ThreadPool threadPool, TimerService timerService) {
+    @Inject public TransportService(Settings settings, Transport transport, ThreadPool threadPool) {
         super(settings);
         this.transport = transport;
         this.threadPool = threadPool;
-        this.timerService = timerService;
     }
 
     @Override protected void doStart() throws ElasticSearchException {
@@ -173,19 +169,20 @@ public class TransportService extends AbstractLifecycleComponent<TransportServic
     public <T extends Streamable> void sendRequest(final DiscoveryNode node, final String action, final Streamable message,
                                                    final TransportRequestOptions options, final TransportResponseHandler<T> handler) throws TransportException {
         final long requestId = newRequestId();
-        Timeout timeoutX = null;
+        TimeoutHandler timeoutHandler = null;
         try {
             if (options.timeout() != null) {
-                timeoutX = timerService.newTimeout(new TimeoutTimerTask(requestId), options.timeout(), TimerService.ExecutionType.THREADED);
+                timeoutHandler = new TimeoutHandler(requestId);
+                timeoutHandler.future = threadPool.schedule(options.timeout(), ThreadPool.Names.CACHED, timeoutHandler);
             }
-            clientHandlers.put(requestId, new RequestHolder<T>(handler, node, action, timeoutX));
+            clientHandlers.put(requestId, new RequestHolder<T>(handler, node, action, timeoutHandler));
             transport.sendRequest(node, requestId, action, message, options);
         } catch (final Exception e) {
             // usually happen either because we failed to connect to the node
             // or because we failed serializing the message
             clientHandlers.remove(requestId);
-            if (timeoutX != null) {
-                timeoutX.cancel();
+            if (timeoutHandler != null) {
+                timeoutHandler.future.cancel(false);
             }
             if (throwConnectException) {
                 if (e instanceof ConnectTransportException) {
@@ -195,7 +192,7 @@ public class TransportService extends AbstractLifecycleComponent<TransportServic
             // callback that an exception happened, but on a different thread since we don't
             // want handlers to worry about stack overflows
             final SendRequestTransportException sendRequestException = new SendRequestTransportException(node, action, e);
-            threadPool.execute(new Runnable() {
+            threadPool.executor(ThreadPool.Names.CACHED).execute(new Runnable() {
                 @Override public void run() {
                     handler.handleException(sendRequestException);
                 }
@@ -216,14 +213,19 @@ public class TransportService extends AbstractLifecycleComponent<TransportServic
     }
 
     public void registerHandler(String action, TransportRequestHandler handler) {
-        TransportRequestHandler handlerReplaced = serverHandlers.put(action, handler);
-        if (handlerReplaced != null) {
-            logger.warn("Registered two transport handlers for action {}, handlers: {}, {}", action, handler, handlerReplaced);
+        synchronized (serverHandlersMutex) {
+            TransportRequestHandler handlerReplaced = serverHandlers.get(action);
+            serverHandlers = MapBuilder.newMapBuilder(serverHandlers).put(action, handler).immutableMap();
+            if (handlerReplaced != null) {
+                logger.warn("Registered two transport handlers for action {}, handlers: {}, {}", action, handler, handlerReplaced);
+            }
         }
     }
 
     public void removeHandler(String action) {
-        serverHandlers.remove(action);
+        synchronized (serverHandlersMutex) {
+            serverHandlers = MapBuilder.newMapBuilder(serverHandlers).remove(action).immutableMap();
+        }
     }
 
     class Adapter implements TransportServiceAdapter {
@@ -248,15 +250,14 @@ public class TransportService extends AbstractLifecycleComponent<TransportServic
                 // lets see if its in the timeout holder
                 TimeoutInfoHolder timeoutInfoHolder = timeoutInfoHandlers.remove(requestId);
                 if (timeoutInfoHolder != null) {
-                    logger.warn("Received response for a request that has timed out, action [{}], node [{}], id [{}]", timeoutInfoHolder.action(), timeoutInfoHolder.node(), requestId);
+                    long time = System.currentTimeMillis();
+                    logger.warn("Received response for a request that has timed out, sent [{}ms] ago, timed out [{}ms] ago, action [{}], node [{}], id [{}]", time - timeoutInfoHolder.sentTime(), time - timeoutInfoHolder.timeoutTime(), timeoutInfoHolder.action(), timeoutInfoHolder.node(), requestId);
                 } else {
                     logger.warn("Transport response handler not found of id [{}]", requestId);
                 }
                 return null;
             }
-            if (holder.timeout() != null) {
-                holder.timeout().cancel();
-            }
+            holder.cancel();
             return holder.handler();
         }
 
@@ -271,7 +272,7 @@ public class TransportService extends AbstractLifecycleComponent<TransportServic
         }
 
         @Override public void raiseNodeDisconnected(final DiscoveryNode node) {
-            threadPool.execute(new Runnable() {
+            threadPool.cached().execute(new Runnable() {
                 @Override public void run() {
                     for (TransportConnectionListener connectionListener : connectionListeners) {
                         connectionListener.onNodeDisconnected(node);
@@ -284,7 +285,7 @@ public class TransportService extends AbstractLifecycleComponent<TransportServic
                             if (holderToNotify != null) {
                                 // callback that an exception happened, but on a different thread since we don't
                                 // want handlers to worry about stack overflows
-                                threadPool.execute(new Runnable() {
+                                threadPool.cached().execute(new Runnable() {
                                     @Override public void run() {
                                         holderToNotify.handler().handleException(new NodeDisconnectedException(node, holderToNotify.action()));
                                     }
@@ -297,23 +298,32 @@ public class TransportService extends AbstractLifecycleComponent<TransportServic
         }
     }
 
-    class TimeoutTimerTask implements TimerTask {
+    class TimeoutHandler implements Runnable {
 
         private final long requestId;
 
-        TimeoutTimerTask(long requestId) {
+        private final long sentTime = System.currentTimeMillis();
+
+        ScheduledFuture future;
+
+        TimeoutHandler(long requestId) {
             this.requestId = requestId;
         }
 
-        @Override public void run(Timeout timeout) throws Exception {
-            if (timeout.isCancelled()) {
+        public long sentTime() {
+            return sentTime;
+        }
+
+        @Override public void run() {
+            if (future.isCancelled()) {
                 return;
             }
             final RequestHolder holder = clientHandlers.remove(requestId);
             if (holder != null) {
                 // add it to the timeout information holder, in case we are going to get a response later
-                timeoutInfoHandlers.put(requestId, new TimeoutInfoHolder(holder.node(), holder.action()));
-                holder.handler().handleException(new ReceiveTimeoutTransportException(holder.node(), holder.action(), "request_id [" + requestId + "]"));
+                long timeoutTime = System.currentTimeMillis();
+                timeoutInfoHandlers.put(requestId, new TimeoutInfoHolder(holder.node(), holder.action(), sentTime, timeoutTime));
+                holder.handler().handleException(new ReceiveTimeoutTransportException(holder.node(), holder.action(), "request_id [" + requestId + "] timed out after [" + (timeoutTime - sentTime) + "ms]"));
             }
         }
     }
@@ -325,9 +335,15 @@ public class TransportService extends AbstractLifecycleComponent<TransportServic
 
         private final String action;
 
-        TimeoutInfoHolder(DiscoveryNode node, String action) {
+        private final long sentTime;
+
+        private final long timeoutTime;
+
+        TimeoutInfoHolder(DiscoveryNode node, String action, long sentTime, long timeoutTime) {
             this.node = node;
             this.action = action;
+            this.sentTime = sentTime;
+            this.timeoutTime = timeoutTime;
         }
 
         public DiscoveryNode node() {
@@ -336,6 +352,14 @@ public class TransportService extends AbstractLifecycleComponent<TransportServic
 
         public String action() {
             return action;
+        }
+
+        public long sentTime() {
+            return sentTime;
+        }
+
+        public long timeoutTime() {
+            return timeoutTime;
         }
     }
 
@@ -347,9 +371,9 @@ public class TransportService extends AbstractLifecycleComponent<TransportServic
 
         private final String action;
 
-        private final Timeout timeout;
+        private final TimeoutHandler timeout;
 
-        RequestHolder(TransportResponseHandler<T> handler, DiscoveryNode node, String action, Timeout timeout) {
+        RequestHolder(TransportResponseHandler<T> handler, DiscoveryNode node, String action, TimeoutHandler timeout) {
             this.handler = handler;
             this.node = node;
             this.action = action;
@@ -368,8 +392,10 @@ public class TransportService extends AbstractLifecycleComponent<TransportServic
             return this.action;
         }
 
-        public Timeout timeout() {
-            return timeout;
+        public void cancel() {
+            if (timeout != null) {
+                timeout.future.cancel(false);
+            }
         }
     }
 }

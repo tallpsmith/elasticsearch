@@ -19,6 +19,7 @@
 
 package org.elasticsearch.index.query;
 
+import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.collect.ImmutableMap;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
@@ -26,7 +27,6 @@ import org.elasticsearch.index.AbstractIndexComponent;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.settings.IndexSettings;
 
-import javax.annotation.Nullable;
 import java.util.Map;
 
 import static org.elasticsearch.common.collect.Maps.*;
@@ -69,6 +69,12 @@ public class IndexQueryParserService extends AbstractIndexComponent {
         indexQueryParsers = ImmutableMap.copyOf(qparsers);
 
         defaultIndexQueryParser = indexQueryParser(Defaults.DEFAULT);
+    }
+
+    public void close() {
+        for (IndexQueryParser indexQueryParser : indexQueryParsers.values()) {
+            indexQueryParser.close();
+        }
     }
 
     public IndexQueryParser indexQueryParser(String name) {

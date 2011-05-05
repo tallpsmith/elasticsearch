@@ -28,13 +28,15 @@ import org.elasticsearch.client.Client;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
+import org.elasticsearch.common.xcontent.XContentBuilderString;
 import org.elasticsearch.rest.*;
+import org.elasticsearch.rest.action.support.RestActions;
 import org.elasticsearch.rest.action.support.RestXContentBuilder;
 
 import java.io.IOException;
 
 import static org.elasticsearch.rest.RestRequest.Method.*;
-import static org.elasticsearch.rest.RestResponse.Status.*;
+import static org.elasticsearch.rest.RestStatus.*;
 
 /**
  * @author kimchy (shay.banon)
@@ -48,9 +50,11 @@ public class RestDeleteAction extends BaseRestHandler {
 
     @Override public void handleRequest(final RestRequest request, final RestChannel channel) {
         DeleteRequest deleteRequest = new DeleteRequest(request.param("index"), request.param("type"), request.param("id"));
+        deleteRequest.parent(request.param("parent"));
         deleteRequest.routing(request.param("routing"));
         deleteRequest.timeout(request.paramAsTime("timeout", DeleteRequest.DEFAULT_TIMEOUT));
         deleteRequest.refresh(request.paramAsBoolean("refresh", deleteRequest.refresh()));
+        deleteRequest.version(RestActions.parseVersion(request));
         // we just send a response, no need to fork
         deleteRequest.listenerThreaded(false);
         // we don't spawn, then fork if local
@@ -70,12 +74,18 @@ public class RestDeleteAction extends BaseRestHandler {
                 try {
                     XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
                     builder.startObject()
-                            .field("ok", true)
-                            .field("_index", result.index())
-                            .field("_type", result.type())
-                            .field("_id", result.id())
+                            .field(Fields.OK, true)
+                            .field(Fields.FOUND, !result.notFound())
+                            .field(Fields._INDEX, result.index())
+                            .field(Fields._TYPE, result.type())
+                            .field(Fields._ID, result.id())
+                            .field(Fields._VERSION, result.version())
                             .endObject();
-                    channel.sendResponse(new XContentRestResponse(request, OK, builder));
+                    RestStatus status = OK;
+                    if (result.notFound()) {
+                        status = NOT_FOUND;
+                    }
+                    channel.sendResponse(new XContentRestResponse(request, status, builder));
                 } catch (Exception e) {
                     onFailure(e);
                 }
@@ -89,5 +99,14 @@ public class RestDeleteAction extends BaseRestHandler {
                 }
             }
         });
+    }
+
+    static final class Fields {
+        static final XContentBuilderString OK = new XContentBuilderString("ok");
+        static final XContentBuilderString FOUND = new XContentBuilderString("found");
+        static final XContentBuilderString _INDEX = new XContentBuilderString("_index");
+        static final XContentBuilderString _TYPE = new XContentBuilderString("_type");
+        static final XContentBuilderString _ID = new XContentBuilderString("_id");
+        static final XContentBuilderString _VERSION = new XContentBuilderString("_version");
     }
 }

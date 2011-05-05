@@ -21,14 +21,16 @@ package org.elasticsearch.search.builder;
 
 import org.elasticsearch.client.Requests;
 import org.elasticsearch.common.Unicode;
+import org.elasticsearch.common.collect.ImmutableList;
 import org.elasticsearch.common.collect.Lists;
 import org.elasticsearch.common.io.FastByteArrayOutputStream;
-import org.elasticsearch.common.trove.TObjectFloatHashMap;
-import org.elasticsearch.common.trove.TObjectFloatIterator;
+import org.elasticsearch.common.trove.iterator.TObjectFloatIterator;
+import org.elasticsearch.common.trove.map.hash.TObjectFloatHashMap;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentType;
+import org.elasticsearch.index.query.xcontent.XContentFilterBuilder;
 import org.elasticsearch.index.query.xcontent.XContentQueryBuilder;
 import org.elasticsearch.search.facet.AbstractFacetBuilder;
 import org.elasticsearch.search.highlight.HighlightBuilder;
@@ -68,6 +70,10 @@ public class SearchSourceBuilder implements ToXContent {
 
     private byte[] queryBinary;
 
+    private XContentFilterBuilder filterBuilder;
+
+    private byte[] filterBinary;
+
     private int from = -1;
 
     private int size = -1;
@@ -76,13 +82,21 @@ public class SearchSourceBuilder implements ToXContent {
 
     private Boolean explain;
 
+    private Boolean version;
+
     private List<SortBuilder> sorts;
+
+    private boolean trackScores = false;
+
+    private Float minScore;
 
     private List<String> fieldNames;
 
     private List<ScriptField> scriptFields;
 
     private List<AbstractFacetBuilder> facets;
+
+    private byte[] facetsBinary;
 
     private HighlightBuilder highlightBuilder;
 
@@ -122,6 +136,33 @@ public class SearchSourceBuilder implements ToXContent {
     }
 
     /**
+     * Sets a filter on the query executed that only applies to the search query
+     * (and not facets for example).
+     */
+    public SearchSourceBuilder filter(XContentFilterBuilder filter) {
+        this.filterBuilder = filter;
+        return this;
+    }
+
+    /**
+     * Sets a filter on the query executed that only applies to the search query
+     * (and not facets for example).
+     */
+    public SearchSourceBuilder filter(String filterString) {
+        this.filterBinary = Unicode.fromStringAsBytes(filterString);
+        return this;
+    }
+
+    /**
+     * Sets a filter on the query executed that only applies to the search query
+     * (and not facets for example).
+     */
+    public SearchSourceBuilder filter(byte[] filter) {
+        this.filterBinary = filter;
+        return this;
+    }
+
+    /**
      * From index to start the search from. Defaults to <tt>0</tt>.
      */
     public SearchSourceBuilder from(int from) {
@@ -134,6 +175,14 @@ public class SearchSourceBuilder implements ToXContent {
      */
     public SearchSourceBuilder size(int size) {
         this.size = size;
+        return this;
+    }
+
+    /**
+     * Sets the minimum score below which docs will be filtered out.
+     */
+    public SearchSourceBuilder minScore(float minScore) {
+        this.minScore = minScore;
         return this;
     }
 
@@ -151,6 +200,15 @@ public class SearchSourceBuilder implements ToXContent {
      */
     public SearchSourceBuilder explain(Boolean explain) {
         this.explain = explain;
+        return this;
+    }
+
+    /**
+     * Should each {@link org.elasticsearch.search.SearchHit} be returned with a version
+     * associated with it.
+     */
+    public SearchSourceBuilder version(Boolean version) {
+        this.version = version;
         return this;
     }
 
@@ -185,6 +243,15 @@ public class SearchSourceBuilder implements ToXContent {
     }
 
     /**
+     * Applies when sorting, and controls if scores will be tracked as well. Defaults to
+     * <tt>false</tt>.
+     */
+    public SearchSourceBuilder trackScores(boolean trackScores) {
+        this.trackScores = trackScores;
+        return this;
+    }
+
+    /**
      * Add a facet to perform as part of the search.
      */
     public SearchSourceBuilder facet(AbstractFacetBuilder facet) {
@@ -192,6 +259,14 @@ public class SearchSourceBuilder implements ToXContent {
             facets = Lists.newArrayList();
         }
         facets.add(facet);
+        return this;
+    }
+
+    /**
+     * Sets a raw (xcontent / json) facets.
+     */
+    public SearchSourceBuilder facets(byte[] facetsBinary) {
+        this.facetsBinary = facetsBinary;
         return this;
     }
 
@@ -207,6 +282,14 @@ public class SearchSourceBuilder implements ToXContent {
      */
     public SearchSourceBuilder highlight(HighlightBuilder highlightBuilder) {
         this.highlightBuilder = highlightBuilder;
+        return this;
+    }
+
+    /**
+     * Sets no fields to be loaded, resulting in only id and type to be returned per field.
+     */
+    public SearchSourceBuilder noFields() {
+        this.fieldNames = ImmutableList.of();
         return this;
     }
 
@@ -322,7 +405,7 @@ public class SearchSourceBuilder implements ToXContent {
     }
 
 
-    @Override public void toXContent(XContentBuilder builder, Params params) throws IOException {
+    @Override public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject();
 
         if (from != -1) {
@@ -346,6 +429,27 @@ public class SearchSourceBuilder implements ToXContent {
             } else {
                 builder.field("query_binary", queryBinary);
             }
+        }
+
+        if (filterBuilder != null) {
+            builder.field("filter");
+            filterBuilder.toXContent(builder, params);
+        }
+
+        if (filterBinary != null) {
+            if (XContentFactory.xContentType(queryBinary) == builder.contentType()) {
+                builder.rawField("filter", filterBinary);
+            } else {
+                builder.field("filter_binary", queryBinary);
+            }
+        }
+
+        if (minScore != null) {
+            builder.field("min_score", minScore);
+        }
+
+        if (version != null) {
+            builder.field("version", version);
         }
 
         if (explain != null) {
@@ -389,6 +493,9 @@ public class SearchSourceBuilder implements ToXContent {
                 builder.endObject();
             }
             builder.endArray();
+            if (trackScores) {
+                builder.field("track_scores", trackScores);
+            }
         }
 
         if (indexBoost != null) {
@@ -409,11 +516,20 @@ public class SearchSourceBuilder implements ToXContent {
             builder.endObject();
         }
 
+        if (facetsBinary != null) {
+            if (XContentFactory.xContentType(facetsBinary) == builder.contentType()) {
+                builder.rawField("facets", facetsBinary);
+            } else {
+                builder.field("facets_binary", facetsBinary);
+            }
+        }
+
         if (highlightBuilder != null) {
             highlightBuilder.toXContent(builder, params);
         }
 
         builder.endObject();
+        return builder;
     }
 
     private static class ScriptField {

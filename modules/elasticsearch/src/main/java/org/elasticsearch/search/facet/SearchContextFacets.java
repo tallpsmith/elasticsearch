@@ -19,8 +19,6 @@
 
 package org.elasticsearch.search.facet;
 
-import org.elasticsearch.search.facet.collector.FacetCollector;
-
 import java.util.List;
 
 /**

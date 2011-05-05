@@ -19,7 +19,6 @@
 
 package org.elasticsearch.search.facet.geodistance;
 
-import org.elasticsearch.common.unit.DistanceUnit;
 import org.elasticsearch.search.facet.Facet;
 
 import java.util.List;
@@ -29,17 +28,10 @@ import java.util.List;
  */
 public interface GeoDistanceFacet extends Facet, Iterable<GeoDistanceFacet.Entry> {
 
-    String fieldName();
-
-    String getFieldName();
-
-    String valueFieldName();
-
-    String getValueFieldName();
-
-    DistanceUnit unit();
-
-    DistanceUnit getUnit();
+    /**
+     * The type of the filter facet.
+     */
+    public static final String TYPE = "geo_distance";
 
     /**
      * An ordered list of geo distance facet entries.
@@ -59,16 +51,27 @@ public interface GeoDistanceFacet extends Facet, Iterable<GeoDistanceFacet.Entry
 
         long count;
 
+        long totalCount;
         double total;
+        double min = Double.POSITIVE_INFINITY;
+        double max = Double.NEGATIVE_INFINITY;
+
+        /**
+         * internal field used to see if this entry was already found for a doc
+         */
+        boolean foundInDoc = false;
 
         Entry() {
         }
 
-        public Entry(double from, double to, long count, double total) {
+        public Entry(double from, double to, long count, long totalCount, double total, double min, double max) {
             this.from = from;
             this.to = to;
             this.count = count;
+            this.totalCount = totalCount;
             this.total = total;
+            this.min = min;
+            this.max = max;
         }
 
         public double from() {
@@ -95,6 +98,14 @@ public interface GeoDistanceFacet extends Facet, Iterable<GeoDistanceFacet.Entry
             return count();
         }
 
+        public long totalCount() {
+            return this.totalCount;
+        }
+
+        public long getTotalCount() {
+            return this.totalCount;
+        }
+
         public double total() {
             return this.total;
         }
@@ -107,7 +118,7 @@ public interface GeoDistanceFacet extends Facet, Iterable<GeoDistanceFacet.Entry
          * The mean of this facet interval.
          */
         public double mean() {
-            return total / count;
+            return total / totalCount;
         }
 
         /**
@@ -115,6 +126,22 @@ public interface GeoDistanceFacet extends Facet, Iterable<GeoDistanceFacet.Entry
          */
         public double getMean() {
             return mean();
+        }
+
+        public double min() {
+            return this.min;
+        }
+
+        public double getMin() {
+            return this.min;
+        }
+
+        public double max() {
+            return this.max;
+        }
+
+        public double getMax() {
+            return this.max;
         }
     }
 }

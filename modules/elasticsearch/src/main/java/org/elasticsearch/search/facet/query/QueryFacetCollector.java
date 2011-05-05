@@ -20,21 +20,24 @@
 package org.elasticsearch.search.facet.query;
 
 import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.search.Filter;
-import org.apache.lucene.search.Query;
-import org.apache.lucene.search.QueryWrapperFilter;
+import org.apache.lucene.search.*;
 import org.elasticsearch.common.lucene.docset.DocSet;
 import org.elasticsearch.common.lucene.docset.DocSets;
+import org.elasticsearch.common.lucene.search.Queries;
 import org.elasticsearch.index.cache.filter.FilterCache;
+import org.elasticsearch.search.facet.AbstractFacetCollector;
 import org.elasticsearch.search.facet.Facet;
-import org.elasticsearch.search.facet.support.AbstractFacetCollector;
+import org.elasticsearch.search.facet.OptimizeGlobalFacetCollector;
+import org.elasticsearch.search.internal.SearchContext;
 
 import java.io.IOException;
 
 /**
  * @author kimchy (shay.banon)
  */
-public class QueryFacetCollector extends AbstractFacetCollector {
+public class QueryFacetCollector extends AbstractFacetCollector implements OptimizeGlobalFacetCollector {
+
+    private final Query query;
 
     private final Filter filter;
 
@@ -44,7 +47,13 @@ public class QueryFacetCollector extends AbstractFacetCollector {
 
     public QueryFacetCollector(String facetName, Query query, FilterCache filterCache) {
         super(facetName);
-        this.filter = filterCache.cache(new QueryWrapperFilter(query));
+        this.query = query;
+        Filter possibleFilter = extractFilterIfApplicable(query);
+        if (possibleFilter != null) {
+            this.filter = possibleFilter;
+        } else {
+            this.filter = new QueryWrapperFilter(query);
+        }
     }
 
     @Override protected void doSetNextReader(IndexReader reader, int docBase) throws IOException {
@@ -57,7 +66,40 @@ public class QueryFacetCollector extends AbstractFacetCollector {
         }
     }
 
+    @Override public void optimizedGlobalExecution(SearchContext searchContext) throws IOException {
+        Query query = this.query;
+        if (super.filter != null) {
+            query = new FilteredQuery(query, super.filter);
+        }
+        if (searchContext.types().length > 0) {
+            query = new FilteredQuery(query, searchContext.filterCache().cache(searchContext.mapperService().typesFilter(searchContext.types())));
+        }
+        TotalHitCountCollector collector = new TotalHitCountCollector();
+        searchContext.searcher().search(query, collector);
+        count = collector.getTotalHits();
+    }
+
     @Override public Facet facet() {
         return new InternalQueryFacet(facetName, count);
+    }
+
+    /**
+     * If its a filtered query with a match all, then we just need the inner filter.
+     */
+    private Filter extractFilterIfApplicable(Query query) {
+        if (query instanceof FilteredQuery) {
+            FilteredQuery fQuery = (FilteredQuery) query;
+            if (Queries.isMatchAllQuery(fQuery.getQuery())) {
+                return fQuery.getFilter();
+            }
+        } else if (query instanceof DeletionAwareConstantScoreQuery) {
+            return ((DeletionAwareConstantScoreQuery) query).getFilter();
+        } else if (query instanceof ConstantScoreQuery) {
+            ConstantScoreQuery constantScoreQuery = (ConstantScoreQuery) query;
+            if (constantScoreQuery.getFilter() != null) {
+                return constantScoreQuery.getFilter();
+            }
+        }
+        return null;
     }
 }

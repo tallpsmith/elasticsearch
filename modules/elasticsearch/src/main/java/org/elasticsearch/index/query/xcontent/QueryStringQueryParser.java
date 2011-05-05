@@ -24,17 +24,18 @@ import org.apache.lucene.queryParser.MultiFieldQueryParserSettings;
 import org.apache.lucene.queryParser.ParseException;
 import org.apache.lucene.queryParser.QueryParser;
 import org.apache.lucene.search.Query;
-import org.elasticsearch.cache.query.parser.QueryParserCache;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.collect.Lists;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.regex.Regex;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.trove.ExtTObjectFloatHashMap;
+import org.elasticsearch.common.trove.impl.Constants;
+import org.elasticsearch.common.trove.map.hash.TObjectFloatHashMap;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.AbstractIndexComponent;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.analysis.AnalysisService;
+import org.elasticsearch.index.cache.query.parser.QueryParserCache;
 import org.elasticsearch.index.mapper.AllFieldMapper;
 import org.elasticsearch.index.query.QueryParsingException;
 import org.elasticsearch.index.settings.IndexSettings;
@@ -102,7 +103,7 @@ public class QueryStringQueryParser extends AbstractIndexComponent implements XC
                                 qpSettings.fields().add(field);
                                 if (fBoost != -1) {
                                     if (qpSettings.boosts() == null) {
-                                        qpSettings.boosts(new ExtTObjectFloatHashMap<String>().defaultReturnValue(1.0f));
+                                        qpSettings.boosts(new TObjectFloatHashMap<String>(Constants.DEFAULT_CAPACITY, Constants.DEFAULT_LOAD_FACTOR, 1.0f));
                                     }
                                     qpSettings.boosts().put(field, fBoost);
                                 }
@@ -111,7 +112,7 @@ public class QueryStringQueryParser extends AbstractIndexComponent implements XC
                             qpSettings.fields().add(fField);
                             if (fBoost != -1) {
                                 if (qpSettings.boosts() == null) {
-                                    qpSettings.boosts(new ExtTObjectFloatHashMap<String>().defaultReturnValue(1.0f));
+                                    qpSettings.boosts(new TObjectFloatHashMap<String>(Constants.DEFAULT_CAPACITY, Constants.DEFAULT_LOAD_FACTOR, 1.0f));
                                 }
                                 qpSettings.boosts().put(fField, fBoost);
                             }
@@ -154,6 +155,8 @@ public class QueryStringQueryParser extends AbstractIndexComponent implements XC
                     qpSettings.boost(parser.floatValue());
                 } else if ("tie_breaker".equals(currentFieldName) || "tieBreaker".equals(currentFieldName)) {
                     qpSettings.tieBreaker(parser.floatValue());
+                } else if ("analyze_wildcard".equals(currentFieldName) || "analyzeWildcard".equals(currentFieldName)) {
+                    qpSettings.analyzeWildcard(parser.booleanValue());
                 }
             }
         }
@@ -177,13 +180,13 @@ public class QueryStringQueryParser extends AbstractIndexComponent implements XC
         if (qpSettings.fields() != null) {
             if (qpSettings.fields().size() == 1) {
                 qpSettings.defaultField(qpSettings.fields().get(0));
-                queryParser = parseContext.queryParser(qpSettings);
+                queryParser = parseContext.singleQueryParser(qpSettings);
             } else {
                 qpSettings.defaultField(null); // reset defaultField when using multi query parser
-                queryParser = parseContext.queryParser(qpSettings);
+                queryParser = parseContext.multiQueryParser(qpSettings);
             }
         } else {
-            queryParser = parseContext.queryParser(qpSettings);
+            queryParser = parseContext.singleQueryParser(qpSettings);
         }
 
 

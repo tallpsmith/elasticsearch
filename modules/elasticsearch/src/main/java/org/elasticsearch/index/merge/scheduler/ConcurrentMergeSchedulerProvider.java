@@ -19,17 +19,20 @@
 
 package org.elasticsearch.index.merge.scheduler;
 
-import org.apache.lucene.index.ConcurrentMergeScheduler;
-import org.apache.lucene.index.IndexWriter;
-import org.apache.lucene.index.MergePolicy;
-import org.apache.lucene.index.MergeScheduler;
+import org.apache.lucene.index.*;
+import org.apache.lucene.store.AlreadyClosedException;
 import org.elasticsearch.common.inject.Inject;
+import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.index.merge.MergeStats;
+import org.elasticsearch.index.merge.policy.EnableMergePolicy;
 import org.elasticsearch.index.settings.IndexSettings;
 import org.elasticsearch.index.shard.AbstractIndexShardComponent;
 import org.elasticsearch.index.shard.ShardId;
 
 import java.io.IOException;
+import java.util.Set;
+import java.util.concurrent.CopyOnWriteArraySet;
 
 /**
  * @author kimchy (shay.banon)
@@ -37,6 +40,8 @@ import java.io.IOException;
 public class ConcurrentMergeSchedulerProvider extends AbstractIndexShardComponent implements MergeSchedulerProvider {
 
     private final int maxThreadCount;
+
+    private Set<CustomConcurrentMergeScheduler> schedulers = new CopyOnWriteArraySet<CustomConcurrentMergeScheduler>();
 
     @Inject public ConcurrentMergeSchedulerProvider(ShardId shardId, @IndexSettings Settings indexSettings) {
         super(shardId, indexSettings);
@@ -47,17 +52,58 @@ public class ConcurrentMergeSchedulerProvider extends AbstractIndexShardComponen
     }
 
     @Override public MergeScheduler newMergeScheduler() {
-        ConcurrentMergeScheduler concurrentMergeScheduler = new CustomConcurrentMergeScheduler();
+        CustomConcurrentMergeScheduler concurrentMergeScheduler = new CustomConcurrentMergeScheduler(logger, shardId, this);
         concurrentMergeScheduler.setMaxThreadCount(maxThreadCount);
+        schedulers.add(concurrentMergeScheduler);
         return concurrentMergeScheduler;
     }
 
-    private class CustomConcurrentMergeScheduler extends ConcurrentMergeScheduler {
+    @Override public MergeStats stats() {
+        MergeStats mergeStats = new MergeStats();
+        for (CustomConcurrentMergeScheduler scheduler : schedulers) {
+            mergeStats.add(scheduler.totalMerges(), scheduler.currentMerges(), scheduler.totalMergeTime());
+        }
+        return mergeStats;
+    }
+
+    public static class CustomConcurrentMergeScheduler extends TrackingConcurrentMergeScheduler {
+
+        private final ShardId shardId;
+
+        private final ConcurrentMergeSchedulerProvider provider;
+
+        private CustomConcurrentMergeScheduler(ESLogger logger, ShardId shardId, ConcurrentMergeSchedulerProvider provider) {
+            super(logger);
+            this.shardId = shardId;
+            this.provider = provider;
+        }
+
+        @Override public void merge(IndexWriter writer) throws CorruptIndexException, IOException {
+            try {
+                // if merge is not enabled, don't do any merging...
+                if (writer.getMergePolicy() instanceof EnableMergePolicy) {
+                    if (!((EnableMergePolicy) writer.getMergePolicy()).isMergeEnabled()) {
+                        return;
+                    }
+                }
+            } catch (AlreadyClosedException e) {
+                // called writer#getMergePolicy can cause an AlreadyClosed failure, so ignore it
+                // since we are doing it on close, return here and don't do the actual merge
+                // since we do it outside of a lock in the RobinEngine
+                return;
+            }
+            super.merge(writer);
+        }
 
         @Override protected MergeThread getMergeThread(IndexWriter writer, MergePolicy.OneMerge merge) throws IOException {
             MergeThread thread = super.getMergeThread(writer, merge);
             thread.setName("[" + shardId.index().name() + "][" + shardId.id() + "]: " + thread.getName());
             return thread;
+        }
+
+        @Override public void close() {
+            super.close();
+            provider.schedulers.remove(this);
         }
     }
 }

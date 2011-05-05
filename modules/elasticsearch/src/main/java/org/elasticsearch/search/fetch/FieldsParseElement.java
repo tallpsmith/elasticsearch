@@ -21,7 +21,7 @@ package org.elasticsearch.search.fetch;
 
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.mapper.FieldMapper;
-import org.elasticsearch.script.search.SearchScript;
+import org.elasticsearch.script.SearchScript;
 import org.elasticsearch.search.SearchParseElement;
 import org.elasticsearch.search.fetch.script.ScriptFieldsContext;
 import org.elasticsearch.search.internal.SearchContext;
@@ -36,20 +36,26 @@ public class FieldsParseElement implements SearchParseElement {
         if (token == XContentParser.Token.START_ARRAY) {
             boolean added = false;
             while ((token = parser.nextToken()) != XContentParser.Token.END_ARRAY) {
-                added = true;
                 String name = parser.text();
                 if (name.contains("_source.") || name.contains("doc[")) {
                     // script field to load from source
-                    SearchScript searchScript = new SearchScript(context.lookup(), null, name, null, context.scriptService());
-                    context.scriptFields().add(new ScriptFieldsContext.ScriptField(name, searchScript));
+                    SearchScript searchScript = context.scriptService().search(context.lookup(), "mvel", name, null);
+                    context.scriptFields().add(new ScriptFieldsContext.ScriptField(name, searchScript, true));
                 } else {
-                    FieldMapper fieldMapper = context.mapperService().smartNameFieldMapper(name);
-                    if (!"*".equals(name) && (fieldMapper == null || !fieldMapper.stored())) {
-                        // script field to load from source
-                        SearchScript searchScript = new SearchScript(context.lookup(), null, "_source." + name, null, context.scriptService());
-                        context.scriptFields().add(new ScriptFieldsContext.ScriptField(name, searchScript));
+                    if ("*".equals(name)) {
+                        added = true;
+                        context.fieldNames().add("*");
                     } else {
-                        context.fieldNames().add(name);
+                        FieldMapper fieldMapper = context.mapperService().smartNameFieldMapper(name);
+                        if (fieldMapper != null) {
+                            if (fieldMapper.stored()) {
+                                added = true;
+                                context.fieldNames().add(name);
+                            } else {
+                                SearchScript searchScript = context.scriptService().search(context.lookup(), "mvel", "_source." + fieldMapper.names().fullName(), null);
+                                context.scriptFields().add(new ScriptFieldsContext.ScriptField(name, searchScript, true));
+                            }
+                        }
                     }
                 }
             }
@@ -60,16 +66,23 @@ public class FieldsParseElement implements SearchParseElement {
             String name = parser.text();
             if (name.contains("_source.") || name.contains("doc[")) {
                 // script field to load from source
-                SearchScript searchScript = new SearchScript(context.lookup(), null, name, null, context.scriptService());
-                context.scriptFields().add(new ScriptFieldsContext.ScriptField(name, searchScript));
+                SearchScript searchScript = context.scriptService().search(context.lookup(), "mvel", name, null);
+                context.scriptFields().add(new ScriptFieldsContext.ScriptField(name, searchScript, true));
             } else {
-                FieldMapper fieldMapper = context.mapperService().smartNameFieldMapper(name);
-                if (!"*".equals(name) && (fieldMapper == null || !fieldMapper.stored())) {
-                    // script field to load from source
-                    SearchScript searchScript = new SearchScript(context.lookup(), null, "_source." + name, null, context.scriptService());
-                    context.scriptFields().add(new ScriptFieldsContext.ScriptField(name, searchScript));
+                if ("*".equals(name)) {
+                    context.fieldNames().add("*");
                 } else {
-                    context.fieldNames().add(name);
+                    FieldMapper fieldMapper = context.mapperService().smartNameFieldMapper(name);
+                    if (fieldMapper != null) {
+                        if (fieldMapper.stored()) {
+                            context.fieldNames().add(name);
+                        } else {
+                            SearchScript searchScript = context.scriptService().search(context.lookup(), "mvel", "_source." + fieldMapper.names().fullName(), null);
+                            context.scriptFields().add(new ScriptFieldsContext.ScriptField(name, searchScript, true));
+                        }
+                    } else {
+                        context.emptyFieldNames(); // don't load anything if we can't find mapping
+                    }
                 }
             }
         }

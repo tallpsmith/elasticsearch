@@ -39,6 +39,8 @@ public abstract class FieldData<Doc extends DocFieldData> {
 
     private final String fieldName;
 
+    private long sizeInBytes = -1;
+
     protected FieldData(String fieldName) {
         this.fieldName = fieldName;
     }
@@ -55,6 +57,15 @@ public abstract class FieldData<Doc extends DocFieldData> {
         docFieldData.setDocId(docId);
         return docFieldData;
     }
+
+    public long sizeInBytes() {
+        if (sizeInBytes == -1) {
+            sizeInBytes = computeSizeInBytes();
+        }
+        return sizeInBytes;
+    }
+
+    protected abstract long computeSizeInBytes();
 
     protected abstract Doc createFieldData();
 
@@ -80,6 +91,14 @@ public abstract class FieldData<Doc extends DocFieldData> {
 
     public static interface StringValueInDocProc {
         void onValue(int docId, String value);
+
+        void onMissing(int docId);
+    }
+
+    public abstract void forEachOrdinalInDoc(int docId, OrdinalInDocProc proc);
+
+    public static interface OrdinalInDocProc {
+        void onOrdinal(int docId, int ordinal);
     }
 
     /**

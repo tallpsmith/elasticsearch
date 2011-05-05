@@ -79,7 +79,7 @@ public class ThreadLocals {
                 }
             }
         } catch (Exception e) {
-            logger.debug("Failed to clean thread locals", e);
+            logger.warn("Failed to clean thread locals", e);
         }
     }
 
@@ -117,8 +117,8 @@ public class ThreadLocals {
                             }
                             args[2] = value.getClass().getCanonicalName();
                             args[3] = value.toString();
-                            if (logger.isDebugEnabled()) {
-                                logger.trace("ThreadLocal with key of type [{0}] (value [{1}]) and a value of type [{2}] (value [{3}]):  The ThreadLocal has been forcibly removed.", args);
+                            if (logger.isTraceEnabled()) {
+                                logger.trace("ThreadLocal with key of type [{}] (value [{}]) and a value of type [{}] (value [{}]):  The ThreadLocal has been forcibly removed.", args);
                             }
                             if (key == null) {
                                 staleEntriesCount++;

@@ -21,21 +21,26 @@ package org.elasticsearch.index.engine;
 
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.document.Document;
+import org.apache.lucene.index.ExtendedIndexSearcher;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.Term;
-import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
 import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.component.CloseableComponent;
 import org.elasticsearch.common.lease.Releasable;
+import org.elasticsearch.common.lucene.uid.UidField;
 import org.elasticsearch.common.unit.ByteSizeValue;
+import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.util.concurrent.ThreadSafe;
+import org.elasticsearch.index.VersionType;
 import org.elasticsearch.index.deletionpolicy.SnapshotIndexCommit;
+import org.elasticsearch.index.mapper.DocumentMapper;
 import org.elasticsearch.index.mapper.ParsedDocument;
+import org.elasticsearch.index.mapper.UidFieldMapper;
 import org.elasticsearch.index.shard.IndexShardComponent;
+import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.index.translog.Translog;
-
-import javax.annotation.Nullable;
 
 /**
  * @author kimchy (shay.banon)
@@ -43,7 +48,16 @@ import javax.annotation.Nullable;
 @ThreadSafe
 public interface Engine extends IndexShardComponent, CloseableComponent {
 
+    static ByteSizeValue INACTIVE_SHARD_INDEXING_BUFFER = ByteSizeValue.parseBytesSizeValue("500kb");
+
+    /**
+     * The default suggested refresh interval, -1 to disable it.
+     */
+    TimeValue defaultRefreshInterval();
+
     void updateIndexingBufferSize(ByteSizeValue indexingBufferSize);
+
+    void addFailedEngineListener(FailedEngineListener listener);
 
     /**
      * Starts the Engine.
@@ -52,8 +66,6 @@ public interface Engine extends IndexShardComponent, CloseableComponent {
      * be changed.
      */
     void start() throws EngineException;
-
-    EngineException[] bulk(Bulk bulk) throws EngineException;
 
     void create(Create create) throws EngineException;
 
@@ -64,6 +76,18 @@ public interface Engine extends IndexShardComponent, CloseableComponent {
     void delete(DeleteByQuery delete) throws EngineException;
 
     Searcher searcher() throws EngineException;
+
+    /**
+     * Returns <tt>true</tt> if a refresh is really needed.
+     */
+    boolean refreshNeeded();
+
+    /**
+     * Returns <tt>true</tt> if a possible merge is really needed.
+     */
+    boolean possibleMergeNeeded();
+
+    void maybeMerge() throws EngineException;
 
     /**
      * Refreshes the engine for new search operations to reflect the latest
@@ -83,10 +107,9 @@ public interface Engine extends IndexShardComponent, CloseableComponent {
 
     void recover(RecoveryHandler recoveryHandler) throws EngineException;
 
-    /**
-     * Returns the estimated flushable memory size. Returns <tt>null</tt> if not available.
-     */
-    ByteSizeValue estimateFlushableMemorySize();
+    static interface FailedEngineListener {
+        void onFailedEngine(ShardId shardId, Throwable t);
+    }
 
     /**
      * Recovery allow to start the recovery process. It is built of three phases.
@@ -120,15 +143,26 @@ public interface Engine extends IndexShardComponent, CloseableComponent {
 
         IndexReader reader();
 
-        IndexSearcher searcher();
+        ExtendedIndexSearcher searcher();
     }
 
     static class Refresh {
 
         private final boolean waitForOperations;
 
+        private boolean force = false;
+
         public Refresh(boolean waitForOperations) {
             this.waitForOperations = waitForOperations;
+        }
+
+        public Refresh force(boolean force) {
+            this.force = force;
+            return this;
+        }
+
+        public boolean force() {
+            return this.force;
         }
 
         public boolean waitForOperations() {
@@ -247,45 +281,63 @@ public interface Engine extends IndexShardComponent, CloseableComponent {
             DELETE
         }
 
+        static enum Origin {
+            PRIMARY,
+            REPLICA,
+            RECOVERY
+        }
+
         Type opType();
+
+        Origin origin();
     }
 
-    static class Bulk {
-        private final Operation[] ops;
-        private boolean refresh;
+    static interface IndexingOperation extends Operation {
 
-        public Bulk(Operation[] ops) {
-            this.ops = ops;
-        }
+        ParsedDocument parsedDoc();
 
-        public Operation[] ops() {
-            return this.ops;
-        }
+        Document doc();
 
-        public boolean refresh() {
-            return refresh;
-        }
-
-        public Bulk refresh(boolean refresh) {
-            this.refresh = refresh;
-            return this;
-        }
+        DocumentMapper docMapper();
     }
 
-    static class Create implements Operation {
+    static class Create implements IndexingOperation {
+        private final DocumentMapper docMapper;
+        private final Term uid;
         private final ParsedDocument doc;
-        private boolean refresh;
+        private long version;
+        private VersionType versionType = VersionType.INTERNAL;
+        private Origin origin = Origin.PRIMARY;
 
-        public Create(ParsedDocument doc) {
+        public Create(DocumentMapper docMapper, Term uid, ParsedDocument doc) {
+            this.docMapper = docMapper;
+            this.uid = uid;
             this.doc = doc;
+        }
+
+        public DocumentMapper docMapper() {
+            return this.docMapper;
         }
 
         @Override public Type opType() {
             return Type.CREATE;
         }
 
+        public Create origin(Origin origin) {
+            this.origin = origin;
+            return this;
+        }
+
+        @Override public Origin origin() {
+            return this.origin;
+        }
+
         public ParsedDocument parsedDoc() {
             return this.doc;
+        }
+
+        public Term uid() {
+            return this.uid;
         }
 
         public String type() {
@@ -298,6 +350,24 @@ public interface Engine extends IndexShardComponent, CloseableComponent {
 
         public String routing() {
             return this.doc.routing();
+        }
+
+        public long version() {
+            return this.version;
+        }
+
+        public Create version(long version) {
+            this.version = version;
+            return this;
+        }
+
+        public VersionType versionType() {
+            return this.versionType;
+        }
+
+        public Create versionType(VersionType versionType) {
+            this.versionType = versionType;
+            return this;
         }
 
         public String parent() {
@@ -316,27 +386,40 @@ public interface Engine extends IndexShardComponent, CloseableComponent {
             return this.doc.source();
         }
 
-        public boolean refresh() {
-            return refresh;
-        }
-
-        public void refresh(boolean refresh) {
-            this.refresh = refresh;
+        public UidField uidField() {
+            return (UidField) doc().getFieldable(UidFieldMapper.NAME);
         }
     }
 
-    static class Index implements Operation {
+    static class Index implements IndexingOperation {
+        private final DocumentMapper docMapper;
         private final Term uid;
         private final ParsedDocument doc;
-        private boolean refresh;
+        private long version;
+        private VersionType versionType = VersionType.INTERNAL;
+        private Origin origin = Origin.PRIMARY;
 
-        public Index(Term uid, ParsedDocument doc) {
+        public Index(DocumentMapper docMapper, Term uid, ParsedDocument doc) {
+            this.docMapper = docMapper;
             this.uid = uid;
             this.doc = doc;
         }
 
+        public DocumentMapper docMapper() {
+            return this.docMapper;
+        }
+
         @Override public Type opType() {
             return Type.INDEX;
+        }
+
+        public Index origin(Origin origin) {
+            this.origin = origin;
+            return this;
+        }
+
+        @Override public Origin origin() {
+            return this.origin;
         }
 
         public Term uid() {
@@ -347,6 +430,24 @@ public interface Engine extends IndexShardComponent, CloseableComponent {
             return this.doc;
         }
 
+        public Index version(long version) {
+            this.version = version;
+            return this;
+        }
+
+        public long version() {
+            return this.version;
+        }
+
+        public Index versionType(VersionType versionType) {
+            this.versionType = versionType;
+            return this;
+        }
+
+        public VersionType versionType() {
+            return this.versionType;
+        }
+
         public Document doc() {
             return this.doc.doc();
         }
@@ -375,20 +476,23 @@ public interface Engine extends IndexShardComponent, CloseableComponent {
             return this.doc.source();
         }
 
-        public boolean refresh() {
-            return refresh;
-        }
-
-        public void refresh(boolean refresh) {
-            this.refresh = refresh;
+        public UidField uidField() {
+            return (UidField) doc().getFieldable(UidFieldMapper.NAME);
         }
     }
 
     static class Delete implements Operation {
+        private final String type;
+        private final String id;
         private final Term uid;
-        private boolean refresh;
+        private long version;
+        private VersionType versionType = VersionType.INTERNAL;
+        private Origin origin = Origin.PRIMARY;
+        private boolean notFound;
 
-        public Delete(Term uid) {
+        public Delete(String type, String id, Term uid) {
+            this.type = type;
+            this.id = id;
             this.uid = uid;
         }
 
@@ -396,16 +500,52 @@ public interface Engine extends IndexShardComponent, CloseableComponent {
             return Type.DELETE;
         }
 
+        public Delete origin(Origin origin) {
+            this.origin = origin;
+            return this;
+        }
+
+        @Override public Origin origin() {
+            return this.origin;
+        }
+
+        public String type() {
+            return this.type;
+        }
+
+        public String id() {
+            return this.id;
+        }
+
         public Term uid() {
             return this.uid;
         }
 
-        public boolean refresh() {
-            return refresh;
+        public Delete version(long version) {
+            this.version = version;
+            return this;
         }
 
-        public void refresh(boolean refresh) {
-            this.refresh = refresh;
+        public long version() {
+            return this.version;
+        }
+
+        public Delete versionType(VersionType versionType) {
+            this.versionType = versionType;
+            return this;
+        }
+
+        public VersionType versionType() {
+            return this.versionType;
+        }
+
+        public boolean notFound() {
+            return this.notFound;
+        }
+
+        public Delete notFound(boolean notFound) {
+            this.notFound = notFound;
+            return this;
         }
     }
 

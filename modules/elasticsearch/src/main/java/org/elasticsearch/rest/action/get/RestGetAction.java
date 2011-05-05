@@ -32,7 +32,7 @@ import java.io.IOException;
 import java.util.regex.Pattern;
 
 import static org.elasticsearch.rest.RestRequest.Method.*;
-import static org.elasticsearch.rest.RestResponse.Status.*;
+import static org.elasticsearch.rest.RestStatus.*;
 import static org.elasticsearch.rest.action.support.RestXContentBuilder.*;
 
 /**
@@ -59,7 +59,7 @@ public class RestGetAction extends BaseRestHandler {
         getRequest.operationThreaded(true);
         getRequest.refresh(request.paramAsBoolean("refresh", getRequest.refresh()));
         getRequest.routing(request.param("routing"));
-
+        getRequest.preference(request.param("preference"));
 
         String sField = request.param("fields");
         if (sField != null) {

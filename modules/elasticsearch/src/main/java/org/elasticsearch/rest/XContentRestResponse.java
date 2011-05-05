@@ -47,17 +47,17 @@ public class XContentRestResponse extends AbstractRestResponse {
 
     private final UnicodeUtil.UTF8Result prefixUtf8Result;
 
-    private final Status status;
+    private final RestStatus status;
 
     private final XContentBuilder builder;
 
-    public XContentRestResponse(RestRequest request, Status status) {
+    public XContentRestResponse(RestRequest request, RestStatus status) {
         this.builder = null;
         this.status = status;
         this.prefixUtf8Result = startJsonp(request);
     }
 
-    public XContentRestResponse(RestRequest request, Status status, XContentBuilder builder) throws IOException {
+    public XContentRestResponse(RestRequest request, RestStatus status, XContentBuilder builder) throws IOException {
         this.builder = builder;
         this.status = status;
         this.prefixUtf8Result = startJsonp(request);
@@ -79,7 +79,7 @@ public class XContentRestResponse extends AbstractRestResponse {
         return builder.unsafeBytesLength();
     }
 
-    @Override public Status status() {
+    @Override public RestStatus status() {
         return this.status;
     }
 
@@ -94,7 +94,7 @@ public class XContentRestResponse extends AbstractRestResponse {
         if (prefixUtf8Result != null) {
             return prefixUtf8Result.length;
         }
-        return -1;
+        return 0;
     }
 
     @Override public byte[] suffixContent() {
@@ -108,7 +108,7 @@ public class XContentRestResponse extends AbstractRestResponse {
         if (prefixUtf8Result != null) {
             return END_JSONP.length;
         }
-        return -1;
+        return 0;
     }
 
     private static UnicodeUtil.UTF8Result startJsonp(RestRequest request) {

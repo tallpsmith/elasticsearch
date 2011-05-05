@@ -19,6 +19,7 @@
 
 package org.elasticsearch.indices.store;
 
+import org.apache.lucene.store.FSDirectory;
 import org.elasticsearch.ElasticSearchException;
 import org.elasticsearch.action.ActionFuture;
 import org.elasticsearch.action.FailedNodeException;
@@ -27,6 +28,7 @@ import org.elasticsearch.cluster.ClusterName;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.node.DiscoveryNode;
+import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Unicode;
 import org.elasticsearch.common.collect.ImmutableMap;
 import org.elasticsearch.common.collect.Lists;
@@ -43,11 +45,11 @@ import org.elasticsearch.index.service.IndexService;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.index.shard.service.InternalIndexShard;
 import org.elasticsearch.index.store.StoreFileMetaData;
+import org.elasticsearch.index.store.support.AbstractStore;
 import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
-import javax.annotation.Nullable;
 import java.io.File;
 import java.io.IOException;
 import java.util.Iterator;
@@ -74,6 +76,10 @@ public class TransportNodesListShardStoreMetaData extends TransportNodesOperatio
 
     public ActionFuture<NodesStoreFilesMetaData> list(ShardId shardId, boolean onlyUnallocated, Set<String> nodesIds, @Nullable TimeValue timeout) {
         return execute(new Request(shardId, onlyUnallocated, nodesIds).timeout(timeout));
+    }
+
+    @Override protected String executor() {
+        return ThreadPool.Names.CACHED;
     }
 
     @Override protected String transportAction() {
@@ -158,8 +164,30 @@ public class TransportNodesListShardStoreMetaData extends TransportNodesOperatio
             return new StoreFilesMetaData(false, shardId, ImmutableMap.<String, StoreFileMetaData>of());
         }
         Map<String, StoreFileMetaData> files = Maps.newHashMap();
+        // read the checksums file
+        FSDirectory directory = FSDirectory.open(indexFile);
+        try {
+            Map<String, String> checksums = AbstractStore.readChecksums(directory);
+            for (File file : indexFile.listFiles()) {
+                // BACKWARD CKS SUPPORT
+                if (file.getName().endsWith(".cks")) {
+                    continue;
+                }
+                if (file.getName().startsWith("_checksums")) {
+                    continue;
+                }
+                files.put(file.getName(), new StoreFileMetaData(file.getName(), file.length(), file.lastModified(), checksums.get(file.getName())));
+            }
+        } finally {
+            directory.close();
+        }
+
+        // BACKWARD CKS SUPPORT
         for (File file : indexFile.listFiles()) {
             if (file.getName().endsWith(".cks")) {
+                continue;
+            }
+            if (file.getName().startsWith("_checksums")) {
                 continue;
             }
             // try and load the checksum
@@ -173,6 +201,7 @@ public class TransportNodesListShardStoreMetaData extends TransportNodesOperatio
             }
             files.put(file.getName(), new StoreFileMetaData(file.getName(), file.length(), file.lastModified(), checksum));
         }
+
         return new StoreFilesMetaData(false, shardId, files);
     }
 

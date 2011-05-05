@@ -19,15 +19,12 @@
 
 package org.elasticsearch.search.fetch.script;
 
-import org.apache.lucene.index.IndexReader;
 import org.elasticsearch.ElasticSearchException;
 import org.elasticsearch.common.collect.ImmutableMap;
 import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.index.mapper.Uid;
 import org.elasticsearch.search.SearchHitField;
 import org.elasticsearch.search.SearchParseElement;
 import org.elasticsearch.search.fetch.SearchHitPhase;
-import org.elasticsearch.search.internal.InternalSearchHit;
 import org.elasticsearch.search.internal.InternalSearchHitField;
 import org.elasticsearch.search.internal.SearchContext;
 
@@ -54,20 +51,29 @@ public class ScriptFieldsSearchHitPhase implements SearchHitPhase {
         return context.hasScriptFields();
     }
 
-    @Override public void execute(SearchContext context, InternalSearchHit hit, Uid uid, IndexReader reader, int docId) throws ElasticSearchException {
+    @Override public void execute(SearchContext context, HitContext hitContext) throws ElasticSearchException {
         for (ScriptFieldsContext.ScriptField scriptField : context.scriptFields().fields()) {
-            scriptField.script().setNextReader(reader);
+            scriptField.script().setNextReader(hitContext.reader());
+            scriptField.script().setNextDocId(hitContext.docId());
 
-            Object value = scriptField.script().execute(docId);
-
-            if (hit.fieldsOrNull() == null) {
-                hit.fields(new HashMap<String, SearchHitField>(2));
+            Object value;
+            try {
+                value = scriptField.script().run();
+            } catch (RuntimeException e) {
+                if (scriptField.ignoreException()) {
+                    continue;
+                }
+                throw e;
             }
 
-            SearchHitField hitField = hit.fields().get(scriptField.name());
+            if (hitContext.hit().fieldsOrNull() == null) {
+                hitContext.hit().fields(new HashMap<String, SearchHitField>(2));
+            }
+
+            SearchHitField hitField = hitContext.hit().fields().get(scriptField.name());
             if (hitField == null) {
                 hitField = new InternalSearchHitField(scriptField.name(), new ArrayList<Object>(2));
-                hit.fields().put(scriptField.name(), hitField);
+                hitContext.hit().fields().put(scriptField.name(), hitField);
             }
             hitField.values().add(value);
         }

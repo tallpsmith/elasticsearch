@@ -104,7 +104,7 @@ public class TransportSearchQueryThenFetchAction extends TransportSearchTypeActi
 
             if (localOperations > 0) {
                 if (request.operationThreading() == SearchOperationThreading.SINGLE_THREAD) {
-                    threadPool.execute(new Runnable() {
+                    threadPool.executor(ThreadPool.Names.SEARCH).execute(new Runnable() {
                         @Override public void run() {
                             for (final Map.Entry<SearchShardTarget, ExtTIntArrayList> entry : docIdsToLoad.entrySet()) {
                                 DiscoveryNode node = nodes.get(entry.getKey().nodeId());
@@ -122,7 +122,7 @@ public class TransportSearchQueryThenFetchAction extends TransportSearchTypeActi
                         if (node.id().equals(nodes.localNodeId())) {
                             final FetchSearchRequest fetchSearchRequest = new FetchSearchRequest(queryResults.get(entry.getKey()).id(), entry.getValue());
                             if (localAsync) {
-                                threadPool.execute(new Runnable() {
+                                threadPool.executor(ThreadPool.Names.SEARCH).execute(new Runnable() {
                                     @Override public void run() {
                                         executeFetch(entry.getKey(), counter, fetchSearchRequest, node);
                                     }
@@ -163,7 +163,11 @@ public class TransportSearchQueryThenFetchAction extends TransportSearchTypeActi
             try {
                 innerFinishHim();
             } catch (Exception e) {
-                invokeListener(new ReduceSearchPhaseException("fetch", "", e, buildShardFailures()));
+                ReduceSearchPhaseException failure = new ReduceSearchPhaseException("fetch", "", e, buildShardFailures());
+                if (logger.isDebugEnabled()) {
+                    logger.debug("failed to reduce search", failure);
+                }
+                listener.onFailure(failure);
             } finally {
                 releaseIrrelevantSearchContexts(queryResults, docIdsToLoad);
                 searchCache.releaseQueryResults(queryResults);
@@ -175,9 +179,9 @@ public class TransportSearchQueryThenFetchAction extends TransportSearchTypeActi
             InternalSearchResponse internalResponse = searchPhaseController.merge(sortedShardList, queryResults, fetchResults);
             String scrollId = null;
             if (request.scroll() != null) {
-                scrollId = TransportSearchHelper.buildScrollId(request.searchType(), queryResults.values());
+                scrollId = TransportSearchHelper.buildScrollId(request.searchType(), queryResults.values(), null);
             }
-            invokeListener(new SearchResponse(internalResponse, scrollId, expectedSuccessfulOps, successulOps.get(), buildTookInMillis(), buildShardFailures()));
+            listener.onResponse(new SearchResponse(internalResponse, scrollId, expectedSuccessfulOps, successulOps.get(), buildTookInMillis(), buildShardFailures()));
         }
     }
 }

@@ -27,9 +27,10 @@ import org.apache.lucene.index.Term;
 import org.apache.lucene.index.TermDocs;
 import org.apache.lucene.search.*;
 import org.apache.lucene.util.Version;
+import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
-import org.elasticsearch.common.trove.TIntArrayList;
+import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.index.analysis.AnalyzerScope;
 import org.elasticsearch.index.analysis.NamedAnalyzer;
 
@@ -44,14 +45,28 @@ import java.util.Map;
  */
 public class Lucene {
 
-    @SuppressWarnings({"deprecation"}) public static Version VERSION = Version.LUCENE_CURRENT;
-    public static Version ANALYZER_VERSION = VERSION;
-    public static Version QUERYPARSER_VERSION = VERSION;
+    public static final Version VERSION = Version.LUCENE_31;
+    public static final Version ANALYZER_VERSION = VERSION;
+    public static final Version QUERYPARSER_VERSION = VERSION;
 
     public static final NamedAnalyzer STANDARD_ANALYZER = new NamedAnalyzer("_standard", AnalyzerScope.GLOBAL, new StandardAnalyzer(ANALYZER_VERSION));
     public static final NamedAnalyzer KEYWORD_ANALYZER = new NamedAnalyzer("_keyword", AnalyzerScope.GLOBAL, new KeywordAnalyzer());
 
     public static final int NO_DOC = -1;
+
+    public static Version parseVersion(@Nullable String version, Version defaultVersion, ESLogger logger) {
+        if (version == null) {
+            return defaultVersion;
+        }
+        if ("3.1".equals(version)) {
+            return Version.LUCENE_31;
+        }
+        if ("3.0".equals(version)) {
+            return Version.LUCENE_30;
+        }
+        logger.warn("no version match {}, default to {}", version, defaultVersion);
+        return defaultVersion;
+    }
 
     public static long count(IndexSearcher searcher, Query query, float minScore) throws IOException {
         CountCollector countCollector = new CountCollector(minScore);
@@ -68,34 +83,6 @@ public class Lucene {
             return NO_DOC;
         } finally {
             termDocs.close();
-        }
-    }
-
-    public static TIntArrayList docIds(IndexReader reader, Term term, int expectedSize) throws IOException {
-        TermDocs termDocs = reader.termDocs(term);
-        TIntArrayList list = new TIntArrayList(expectedSize);
-        try {
-            while (termDocs.next()) {
-                list.add(termDocs.doc());
-            }
-        } finally {
-            termDocs.close();
-        }
-        return list;
-    }
-
-    /**
-     * Closes the index reader, returning <tt>false</tt> if it failed to close.
-     */
-    public static boolean safeClose(IndexReader reader) {
-        if (reader == null) {
-            return true;
-        }
-        try {
-            reader.close();
-            return true;
-        } catch (IOException e) {
-            return false;
         }
     }
 
@@ -151,6 +138,10 @@ public class Lucene {
                         cFields[j] = in.readDouble();
                     } else if (type == 6) {
                         cFields[j] = in.readByte();
+                    } else if (type == 7) {
+                        cFields[j] = in.readShort();
+                    } else if (type == 8) {
+                        cFields[j] = in.readBoolean();
                     } else {
                         throw new IOException("Can't match type [" + type + "]");
                     }
@@ -226,6 +217,12 @@ public class Lucene {
                         } else if (type == Byte.class) {
                             out.writeByte((byte) 6);
                             out.writeByte((Byte) field);
+                        } else if (type == Short.class) {
+                            out.writeByte((byte) 7);
+                            out.writeShort((Short) field);
+                        } else if (type == Boolean.class) {
+                            out.writeByte((byte) 8);
+                            out.writeBoolean((Boolean) field);
                         } else {
                             throw new IOException("Can't handle sort field value of type [" + type + "]");
                         }
@@ -406,6 +403,30 @@ public class Lucene {
             if (scorer.score() > minScore) {
                 count++;
             }
+        }
+
+        @Override public void setNextReader(IndexReader reader, int docBase) throws IOException {
+        }
+
+        @Override public boolean acceptsDocsOutOfOrder() {
+            return true;
+        }
+    }
+
+    public static class ExistsCollector extends Collector {
+
+        private boolean exists;
+
+        public boolean exists() {
+            return exists;
+        }
+
+        @Override public void setScorer(Scorer scorer) throws IOException {
+            this.exists = false;
+        }
+
+        @Override public void collect(int doc) throws IOException {
+            exists = true;
         }
 
         @Override public void setNextReader(IndexReader reader, int docBase) throws IOException {

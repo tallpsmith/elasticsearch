@@ -39,12 +39,18 @@ public class ClusterBlock implements Serializable, Streamable, ToXContent {
 
     private ClusterBlockLevel[] levels;
 
-    private ClusterBlock() {
+    private boolean retryable;
+
+    private boolean disableStatePersistence = false;
+
+    ClusterBlock() {
     }
 
-    public ClusterBlock(int id, String description, ClusterBlockLevel... levels) {
+    public ClusterBlock(int id, String description, boolean retryable, boolean disableStatePersistence, ClusterBlockLevel... levels) {
         this.id = id;
         this.description = description;
+        this.retryable = retryable;
+        this.disableStatePersistence = disableStatePersistence;
         this.levels = levels;
     }
 
@@ -57,7 +63,7 @@ public class ClusterBlock implements Serializable, Streamable, ToXContent {
     }
 
     public ClusterBlockLevel[] levels() {
-        return this.levels();
+        return this.levels;
     }
 
     public boolean contains(ClusterBlockLevel level) {
@@ -69,15 +75,35 @@ public class ClusterBlock implements Serializable, Streamable, ToXContent {
         return false;
     }
 
-    @Override public void toXContent(XContentBuilder builder, Params params) throws IOException {
+    /**
+     * Should operations get into retry state if this block is present.
+     */
+    public boolean retryable() {
+        return this.retryable;
+    }
+
+    /**
+     * Should global state persistence be disabled when this block is present. Note,
+     * only relevant for global blocks.
+     */
+    public boolean disableStatePersistence() {
+        return this.disableStatePersistence;
+    }
+
+    @Override public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject(Integer.toString(id));
         builder.field("description", description);
+        builder.field("retryable", retryable);
+        if (disableStatePersistence) {
+            builder.field("disable_state_persistence", disableStatePersistence);
+        }
         builder.startArray("levels");
         for (ClusterBlockLevel level : levels) {
             builder.value(level.name().toLowerCase());
         }
         builder.endArray();
         builder.endObject();
+        return builder;
     }
 
     public static ClusterBlock readClusterBlock(StreamInput in) throws IOException {
@@ -93,6 +119,8 @@ public class ClusterBlock implements Serializable, Streamable, ToXContent {
         for (int i = 0; i < levels.length; i++) {
             levels[i] = ClusterBlockLevel.fromId(in.readVInt());
         }
+        retryable = in.readBoolean();
+        disableStatePersistence = in.readBoolean();
     }
 
     @Override public void writeTo(StreamOutput out) throws IOException {
@@ -102,6 +130,8 @@ public class ClusterBlock implements Serializable, Streamable, ToXContent {
         for (ClusterBlockLevel level : levels) {
             out.writeVInt(level.id());
         }
+        out.writeBoolean(retryable);
+        out.writeBoolean(disableStatePersistence);
     }
 
     public String toString() {

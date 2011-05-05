@@ -71,13 +71,13 @@ public class StatisticalFacetBuilder extends AbstractFacetBuilder {
         return this;
     }
 
-    @Override public void toXContent(XContentBuilder builder, Params params) throws IOException {
+    @Override public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         if (fieldName == null && fieldsNames == null) {
             throw new SearchSourceBuilderException("field must be set on statistical facet for facet [" + name + "]");
         }
         builder.startObject(name);
 
-        builder.startObject(StatisticalFacetCollectorParser.NAME);
+        builder.startObject(StatisticalFacet.TYPE);
         if (fieldsNames != null) {
             if (fieldsNames.length == 1) {
                 builder.field("field", fieldsNames[0]);
@@ -92,5 +92,6 @@ public class StatisticalFacetBuilder extends AbstractFacetBuilder {
         addFilterFacetAndGlobal(builder, params);
 
         builder.endObject();
+        return builder;
     }
 }

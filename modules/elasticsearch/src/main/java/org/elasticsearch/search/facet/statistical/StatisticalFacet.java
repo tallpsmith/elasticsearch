@@ -29,14 +29,9 @@ import org.elasticsearch.search.facet.Facet;
 public interface StatisticalFacet extends Facet {
 
     /**
-     * The field name of the facet.
+     * The type of the filter facet.
      */
-    String fieldName();
-
-    /**
-     * The field name of the facet.
-     */
-    String getFieldName();
+    public static final String TYPE = "statistical";
 
     /**
      * The number of values counted.

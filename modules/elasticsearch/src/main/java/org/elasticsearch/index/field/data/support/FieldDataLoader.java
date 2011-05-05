@@ -27,7 +27,7 @@ import org.apache.lucene.util.StringHelper;
 import org.elasticsearch.index.field.data.FieldData;
 
 import java.io.IOException;
-import java.util.Arrays;
+import java.util.ArrayList;
 
 /**
  * @author kimchy (shay.banon)
@@ -40,11 +40,11 @@ public class FieldDataLoader {
         loader.init();
 
         field = StringHelper.intern(field);
-        int[][] ordinals = new int[reader.maxDoc()][];
+        ArrayList<int[]> ordinals = new ArrayList<int[]>();
+        ordinals.add(new int[reader.maxDoc()]);
 
         int t = 1;  // current term number
 
-        boolean multiValued = false;
         TermDocs termDocs = reader.termDocs();
         TermEnum termEnum = reader.terms(new Term(field));
         try {
@@ -55,19 +55,23 @@ public class FieldDataLoader {
                 termDocs.seek(termEnum);
                 while (termDocs.next()) {
                     int doc = termDocs.doc();
-                    int[] ordinalPerDoc = ordinals[doc];
-                    if (ordinalPerDoc == null) {
-                        ordinalPerDoc = new int[1];
-                        ordinalPerDoc[0] = t;
-                        ordinals[doc] = ordinalPerDoc;
-                    } else {
-                        multiValued = true;
-                        ordinalPerDoc = Arrays.copyOf(ordinalPerDoc, ordinalPerDoc.length + 1);
-                        ordinalPerDoc[ordinalPerDoc.length - 1] = t;
-                        ordinals[doc] = ordinalPerDoc;
+                    boolean found = false;
+                    for (int i = 0; i < ordinals.size(); i++) {
+                        int[] ordinal = ordinals.get(i);
+                        if (ordinal[doc] == 0) {
+                            // we found a spot, use it
+                            ordinal[doc] = t;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        // did not find one, increase by one and redo
+                        int[] ordinal = new int[reader.maxDoc()];
+                        ordinals.add(ordinal);
+                        ordinal[doc] = t;
                     }
                 }
-
                 t++;
             } while (termEnum.next());
         } catch (RuntimeException e) {
@@ -81,17 +85,14 @@ public class FieldDataLoader {
             termEnum.close();
         }
 
-        if (multiValued) {
-            return loader.buildMultiValue(field, ordinals);
+        if (ordinals.size() == 1) {
+            return loader.buildSingleValue(field, ordinals.get(0));
         } else {
-            // optimize for a single valued
-            int[] sOrders = new int[reader.maxDoc()];
-            for (int i = 0; i < ordinals.length; i++) {
-                if (ordinals[i] != null) {
-                    sOrders[i] = ordinals[i][0];
-                }
+            int[][] nativeOrdinals = new int[ordinals.size()][];
+            for (int i = 0; i < nativeOrdinals.length; i++) {
+                nativeOrdinals[i] = ordinals.get(i);
             }
-            return loader.buildSingleValue(field, sOrders);
+            return loader.buildMultiValue(field, nativeOrdinals);
         }
     }
 

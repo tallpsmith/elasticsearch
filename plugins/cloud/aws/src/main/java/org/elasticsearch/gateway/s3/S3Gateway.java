@@ -25,26 +25,31 @@ import org.elasticsearch.cloud.aws.AwsS3Service;
 import org.elasticsearch.cloud.aws.blobstore.S3BlobStore;
 import org.elasticsearch.cluster.ClusterName;
 import org.elasticsearch.cluster.ClusterService;
-import org.elasticsearch.cluster.metadata.MetaDataCreateIndexService;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.Module;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
+import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.common.util.concurrent.DynamicExecutors;
+import org.elasticsearch.common.util.concurrent.EsExecutors;
 import org.elasticsearch.gateway.blobstore.BlobStoreGateway;
 import org.elasticsearch.index.gateway.s3.S3IndexGatewayModule;
 import org.elasticsearch.threadpool.ThreadPool;
 
 import java.io.IOException;
+import java.util.concurrent.ExecutorService;
 
 /**
  * @author kimchy (shay.banon)
  */
 public class S3Gateway extends BlobStoreGateway {
 
-    @Inject public S3Gateway(Settings settings, ClusterService clusterService, MetaDataCreateIndexService createIndexService,
-                             ClusterName clusterName, ThreadPool threadPool, AwsS3Service s3Service) throws IOException {
-        super(settings, clusterService, createIndexService);
+    private final ExecutorService concurrentStreamPool;
+
+    @Inject public S3Gateway(Settings settings, ThreadPool threadPool, ClusterService clusterService,
+                             ClusterName clusterName, AwsS3Service s3Service) throws IOException {
+        super(settings, threadPool, clusterService);
 
         String bucket = componentSettings.get("bucket");
         if (bucket == null) {
@@ -52,15 +57,41 @@ public class S3Gateway extends BlobStoreGateway {
         }
 
         String region = componentSettings.get("region");
+        if (region == null) {
+            if (settings.get("cloud.aws.region") != null) {
+                String regionSetting = settings.get("cloud.aws.region");
+                if ("us-east".equals(regionSetting.toLowerCase())) {
+                    region = null;
+                } else if ("us-east-1".equals(regionSetting.toLowerCase())) {
+                    region = null;
+                } else if ("us-west".equals(regionSetting.toLowerCase())) {
+                    region = "us-west-1";
+                } else if ("us-west-1".equals(regionSetting.toLowerCase())) {
+                    region = "us-west-1";
+                } else if ("ap-southeast".equals(regionSetting.toLowerCase())) {
+                    region = "ap-southeast-1";
+                } else if ("ap-southeast-1".equals(regionSetting.toLowerCase())) {
+                    region = "ap-southeast-1";
+                } else if ("eu-west".equals(regionSetting.toLowerCase())) {
+                    region = "EU";
+                } else if ("eu-west-1".equals(regionSetting.toLowerCase())) {
+                    region = "EU";
+                }
+            }
+        }
         ByteSizeValue chunkSize = componentSettings.getAsBytesSize("chunk_size", new ByteSizeValue(100, ByteSizeUnit.MB));
 
-        logger.debug("using bucket [{}], region [{}], chunk_size [{}]", bucket, region, chunkSize);
+        int concurrentStreams = componentSettings.getAsInt("concurrent_streams", 5);
+        this.concurrentStreamPool = DynamicExecutors.newScalingThreadPool(1, concurrentStreams, TimeValue.timeValueSeconds(5).millis(), EsExecutors.daemonThreadFactory(settings, "[s3_stream]"));
 
-        initialize(new S3BlobStore(settings, s3Service.client(), bucket, region, threadPool.cached()), clusterName, chunkSize);
+        logger.debug("using bucket [{}], region [{}], chunk_size [{}], concurrent_streams [{}]", bucket, region, chunkSize, concurrentStreams);
+
+        initialize(new S3BlobStore(settings, s3Service.client(), bucket, region, concurrentStreamPool), clusterName, chunkSize);
     }
 
-    @Override public void close() throws ElasticSearchException {
-        super.close();
+    @Override protected void doClose() throws ElasticSearchException {
+        super.doClose();
+        concurrentStreamPool.shutdown();
     }
 
     @Override public String type() {

@@ -28,6 +28,7 @@ import org.elasticsearch.cluster.block.ClusterBlockException;
 import org.elasticsearch.common.Base64;
 import org.elasticsearch.common.collect.Maps;
 import org.elasticsearch.common.inject.Inject;
+import org.elasticsearch.common.io.Closeables;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.util.concurrent.EsExecutors;
 import org.elasticsearch.common.util.concurrent.jsr166y.LinkedTransferQueue;
@@ -72,7 +73,6 @@ public class CouchdbRiver extends AbstractRiverComponent implements River {
     private final TimeValue bulkTimeout;
 
     private final ExecutableScript script;
-    private final Map<String, Object> scriptParams = Maps.newHashMap();
 
     private volatile Thread slurperThread;
     private volatile Thread indexerThread;
@@ -202,9 +202,9 @@ public class CouchdbRiver extends AbstractRiverComponent implements River {
         }
 
         if (script != null) {
-            scriptParams.put("ctx", ctx);
+            script.setNextVar("ctx", ctx);
             try {
-                script.run(scriptParams);
+                script.run();
             } catch (Exception e) {
                 logger.warn("failed to script process {}, ignoring", e, ctx);
                 return seq;
@@ -361,6 +361,9 @@ public class CouchdbRiver extends AbstractRiverComponent implements River {
                     final BufferedReader reader = new BufferedReader(new InputStreamReader(is, "UTF-8"));
                     String line;
                     while ((line = reader.readLine()) != null) {
+                        if (closed) {
+                            return;
+                        }
                         if (line.length() == 0) {
                             logger.trace("[couchdb] heartbeat");
                             continue;
@@ -371,18 +374,14 @@ public class CouchdbRiver extends AbstractRiverComponent implements River {
                         stream.add(line);
                     }
                 } catch (Exception e) {
-                    if (is != null) {
-                        try {
-                            is.close();
-                        } catch (IOException e1) {
-                            // ignore
-                        }
-                    }
+                    Closeables.closeQuietly(is);
                     if (connection != null) {
                         try {
                             connection.disconnect();
                         } catch (Exception e1) {
                             // ignore
+                        } finally {
+                            connection = null;
                         }
                     }
                     if (closed) {
@@ -394,6 +393,17 @@ public class CouchdbRiver extends AbstractRiverComponent implements River {
                     } catch (InterruptedException e1) {
                         if (closed) {
                             return;
+                        }
+                    }
+                } finally {
+                    Closeables.closeQuietly(is);
+                    if (connection != null) {
+                        try {
+                            connection.disconnect();
+                        } catch (Exception e1) {
+                            // ignore
+                        } finally {
+                            connection = null;
                         }
                     }
                 }

@@ -29,13 +29,15 @@ import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentBuilderString;
+import org.elasticsearch.index.VersionType;
 import org.elasticsearch.rest.*;
+import org.elasticsearch.rest.action.support.RestActions;
 import org.elasticsearch.rest.action.support.RestXContentBuilder;
 
 import java.io.IOException;
 
 import static org.elasticsearch.rest.RestRequest.Method.*;
-import static org.elasticsearch.rest.RestResponse.Status.*;
+import static org.elasticsearch.rest.RestStatus.*;
 
 /**
  * @author kimchy (shay.banon)
@@ -65,6 +67,9 @@ public class RestIndexAction extends BaseRestHandler {
         indexRequest.source(request.contentByteArray(), request.contentByteArrayOffset(), request.contentLength(), request.contentUnsafe());
         indexRequest.timeout(request.paramAsTime("timeout", IndexRequest.DEFAULT_TIMEOUT));
         indexRequest.refresh(request.paramAsBoolean("refresh", indexRequest.refresh()));
+        indexRequest.version(RestActions.parseVersion(request));
+        indexRequest.versionType(VersionType.fromString(request.param("version_type"), indexRequest.versionType()));
+        indexRequest.percolate(request.param("percolate", null));
         String sOpType = request.param("op_type");
         if (sOpType != null) {
             if ("index".equals(sOpType)) {
@@ -94,16 +99,28 @@ public class RestIndexAction extends BaseRestHandler {
         // we don't spawn, then fork if local
         indexRequest.operationThreaded(true);
         client.index(indexRequest, new ActionListener<IndexResponse>() {
-            @Override public void onResponse(IndexResponse result) {
+            @Override public void onResponse(IndexResponse response) {
                 try {
                     XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
                     builder.startObject()
                             .field(Fields.OK, true)
-                            .field(Fields._INDEX, result.index())
-                            .field(Fields._TYPE, result.type())
-                            .field(Fields._ID, result.id())
-                            .endObject();
-                    channel.sendResponse(new XContentRestResponse(request, OK, builder));
+                            .field(Fields._INDEX, response.index())
+                            .field(Fields._TYPE, response.type())
+                            .field(Fields._ID, response.id())
+                            .field(Fields._VERSION, response.version());
+                    if (response.matches() != null) {
+                        builder.startArray(Fields.MATCHES);
+                        for (String match : response.matches()) {
+                            builder.value(match);
+                        }
+                        builder.endArray();
+                    }
+                    builder.endObject();
+                    RestStatus status = OK;
+                    if (response.version() == 1) {
+                        status = CREATED;
+                    }
+                    channel.sendResponse(new XContentRestResponse(request, status, builder));
                 } catch (Exception e) {
                     onFailure(e);
                 }
@@ -124,6 +141,8 @@ public class RestIndexAction extends BaseRestHandler {
         static final XContentBuilderString _INDEX = new XContentBuilderString("_index");
         static final XContentBuilderString _TYPE = new XContentBuilderString("_type");
         static final XContentBuilderString _ID = new XContentBuilderString("_id");
+        static final XContentBuilderString _VERSION = new XContentBuilderString("_version");
+        static final XContentBuilderString MATCHES = new XContentBuilderString("matches");
     }
 
 }

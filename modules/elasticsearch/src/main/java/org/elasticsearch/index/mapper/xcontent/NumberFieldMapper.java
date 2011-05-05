@@ -20,22 +20,19 @@
 package org.elasticsearch.index.mapper.xcontent;
 
 import org.apache.lucene.analysis.NumericTokenStream;
-import org.apache.lucene.analysis.TokenStream;
+import org.apache.lucene.document.AbstractField;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.Fieldable;
 import org.apache.lucene.search.Filter;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.util.NumericUtils;
-import org.elasticsearch.common.thread.ThreadLocals;
-import org.elasticsearch.common.trove.TIntObjectHashMap;
 import org.elasticsearch.index.analysis.NamedAnalyzer;
 import org.elasticsearch.index.cache.field.data.FieldDataCache;
 import org.elasticsearch.index.field.data.FieldDataType;
 import org.elasticsearch.index.mapper.MergeMappingException;
+import org.elasticsearch.index.query.xcontent.QueryParseContext;
 
-import java.io.IOException;
-import java.util.ArrayDeque;
-import java.util.Deque;
+import java.io.Reader;
 
 /**
  * @author kimchy (shay.banon)
@@ -82,15 +79,15 @@ public abstract class NumberFieldMapper<T extends Number> extends AbstractFieldM
         }
     }
 
-    private static final ThreadLocal<ThreadLocals.CleanableValue<TIntObjectHashMap<Deque<CachedNumericTokenStream>>>> cachedStreams = new ThreadLocal<ThreadLocals.CleanableValue<TIntObjectHashMap<Deque<CachedNumericTokenStream>>>>() {
-        @Override protected ThreadLocals.CleanableValue<TIntObjectHashMap<Deque<CachedNumericTokenStream>>> initialValue() {
-            return new ThreadLocals.CleanableValue<TIntObjectHashMap<Deque<CachedNumericTokenStream>>>(new TIntObjectHashMap<Deque<CachedNumericTokenStream>>());
-        }
-    };
-
     protected int precisionStep;
 
     protected Boolean includeInAll;
+
+    private ThreadLocal<NumericTokenStream> tokenStream = new ThreadLocal<NumericTokenStream>() {
+        @Override protected NumericTokenStream initialValue() {
+            return new NumericTokenStream(precisionStep);
+        }
+    };
 
     protected NumberFieldMapper(Names names, int precisionStep,
                                 Field.Index index, Field.Store store,
@@ -106,6 +103,12 @@ public abstract class NumberFieldMapper<T extends Number> extends AbstractFieldM
 
     @Override public void includeInAll(Boolean includeInAll) {
         if (includeInAll != null) {
+            this.includeInAll = includeInAll;
+        }
+    }
+
+    @Override public void includeInAllIfNotSet(Boolean includeInAll) {
+        if (includeInAll != null && this.includeInAll == null) {
             this.includeInAll = includeInAll;
         }
     }
@@ -127,7 +130,7 @@ public abstract class NumberFieldMapper<T extends Number> extends AbstractFieldM
      * Numeric field level query are basically range queries with same value and included. That's the recommended
      * way to execute it.
      */
-    @Override public Query fieldQuery(String value) {
+    @Override public Query fieldQuery(String value, QueryParseContext context) {
         return rangeQuery(value, value, true, true);
     }
 
@@ -171,88 +174,47 @@ public abstract class NumberFieldMapper<T extends Number> extends AbstractFieldM
         }
     }
 
-    @Override public abstract FieldDataType fieldDataType();
-
-    /**
-     * Removes a cached numeric token stream. The stream will be returned to the cached once it is used
-     * since it implements the end method.
-     */
-    protected CachedNumericTokenStream popCachedStream(int precisionStep) {
-        Deque<CachedNumericTokenStream> deque = cachedStreams.get().get().get(precisionStep);
-        if (deque == null) {
-            deque = new ArrayDeque<CachedNumericTokenStream>();
-            cachedStreams.get().get().put(precisionStep, deque);
-            deque.add(new CachedNumericTokenStream(new NumericTokenStream(precisionStep), precisionStep));
-        }
-        if (deque.isEmpty()) {
-            deque.add(new CachedNumericTokenStream(new NumericTokenStream(precisionStep), precisionStep));
-        }
-        return deque.pollFirst();
+    @Override public void close() {
+        tokenStream.remove();
     }
 
-    /**
-     * A wrapper around a numeric stream allowing to reuse it by implementing the end method which returns
-     * this stream back to the thread local cache.
-     */
-    protected static final class CachedNumericTokenStream extends TokenStream {
+    @Override public abstract FieldDataType fieldDataType();
 
-        private final int precisionStep;
+    protected NumericTokenStream popCachedStream() {
+        return tokenStream.get();
+    }
 
-        private final NumericTokenStream numericTokenStream;
+    // used to we can use a numeric field in a document that is then parsed twice!
+    public abstract static class CustomNumericField extends AbstractField {
 
-        public CachedNumericTokenStream(NumericTokenStream numericTokenStream, int precisionStep) {
-            super(numericTokenStream);
-            this.numericTokenStream = numericTokenStream;
-            this.precisionStep = precisionStep;
-        }
+        protected final NumberFieldMapper mapper;
 
-        public void end() throws IOException {
-            numericTokenStream.end();
-        }
+        public CustomNumericField(NumberFieldMapper mapper, byte[] value) {
+            this.mapper = mapper;
+            this.name = mapper.names().indexName();
+            fieldsData = value;
 
-        /**
-         * Close the input TokenStream.
-         */
-        public void close() throws IOException {
-            numericTokenStream.close();
-            TIntObjectHashMap<Deque<CachedNumericTokenStream>> cached = cachedStreams.get().get();
-            if (cached != null) {
-                Deque<CachedNumericTokenStream> cachedDeque = cached.get(precisionStep);
-                if (cachedDeque != null) {
-                    cachedDeque.add(this);
-                }
+            isIndexed = mapper.indexed();
+            isTokenized = mapper.indexed();
+            omitTermFreqAndPositions = true;
+            omitNorms = true;
+
+            if (value != null) {
+                isStored = true;
+                isBinary = true;
+                binaryLength = value.length;
+                binaryOffset = 0;
             }
+
+            setStoreTermVector(Field.TermVector.NO);
         }
 
-        /**
-         * Reset the filter as well as the input TokenStream.
-         */
-        public void reset() throws IOException {
-            numericTokenStream.reset();
+        @Override public String stringValue() {
+            return null;
         }
 
-        @Override public boolean incrementToken() throws IOException {
-            return numericTokenStream.incrementToken();
-        }
-
-        public CachedNumericTokenStream setIntValue(int value) {
-            numericTokenStream.setIntValue(value);
-            return this;
-        }
-
-        public CachedNumericTokenStream setLongValue(long value) {
-            numericTokenStream.setLongValue(value);
-            return this;
-        }
-
-        public CachedNumericTokenStream setFloatValue(float value) {
-            numericTokenStream.setFloatValue(value);
-            return this;
-        }
-
-        public CachedNumericTokenStream setDoubleValue(double value) {
-            numericTokenStream.setDoubleValue(value);
-            return this;
+        @Override public Reader readerValue() {
+            return null;
         }
     }
 }

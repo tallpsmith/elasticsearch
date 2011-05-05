@@ -28,6 +28,8 @@ import org.elasticsearch.action.search.SearchType;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.client.action.support.BaseRequestBuilder;
 import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.common.xcontent.XContentBuilder;
+import org.elasticsearch.index.query.xcontent.XContentFilterBuilder;
 import org.elasticsearch.index.query.xcontent.XContentQueryBuilder;
 import org.elasticsearch.search.Scroll;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
@@ -151,6 +153,16 @@ public class SearchRequestBuilder extends BaseRequestBuilder<SearchRequest, Sear
     }
 
     /**
+     * Sets the preference to execute the search. Defaults to randomize across shards. Can be set to
+     * <tt>_local</tt> to prefer local shards, <tt>_primary</tt> to execute only on primary shards, or
+     * a custom value, which guarantees that the same order will be used across different requests.
+     */
+    public SearchRequestBuilder setPreference(String preference) {
+        request.preference(preference);
+        return this;
+    }
+
+    /**
      * Controls the the search operation threading model.
      */
     public SearchRequestBuilder setOperationThreading(SearchOperationThreading operationThreading) {
@@ -202,6 +214,41 @@ public class SearchRequestBuilder extends BaseRequestBuilder<SearchRequest, Sear
     }
 
     /**
+     * Sets a filter on the query executed that only applies to the search query
+     * (and not facets for example).
+     */
+    public SearchRequestBuilder setFilter(XContentFilterBuilder filter) {
+        sourceBuilder().filter(filter);
+        return this;
+    }
+
+    /**
+     * Sets a filter on the query executed that only applies to the search query
+     * (and not facets for example).
+     */
+    public SearchRequestBuilder setFilter(String filter) {
+        sourceBuilder().filter(filter);
+        return this;
+    }
+
+    /**
+     * Sets a filter on the query executed that only applies to the search query
+     * (and not facets for example).
+     */
+    public SearchRequestBuilder setFilter(byte[] filter) {
+        sourceBuilder().filter(filter);
+        return this;
+    }
+
+    /**
+     * Sets the minimum score below which docs will be filtered out.
+     */
+    public SearchRequestBuilder setMinScore(float minScore) {
+        sourceBuilder().minScore(minScore);
+        return this;
+    }
+
+    /**
      * From index to start the search from. Defaults to <tt>0</tt>.
      */
     public SearchRequestBuilder setFrom(int from) {
@@ -235,6 +282,15 @@ public class SearchRequestBuilder extends BaseRequestBuilder<SearchRequest, Sear
     }
 
     /**
+     * Should each {@link org.elasticsearch.search.SearchHit} be returned with its
+     * version.
+     */
+    public SearchRequestBuilder setVersion(boolean version) {
+        sourceBuilder().version(version);
+        return this;
+    }
+
+    /**
      * Sets the boost a specific index will receive when the query is executeed against it.
      *
      * @param index      The index to apply the boost against
@@ -242,6 +298,14 @@ public class SearchRequestBuilder extends BaseRequestBuilder<SearchRequest, Sear
      */
     public SearchRequestBuilder addIndexBoost(String index, float indexBoost) {
         sourceBuilder().indexBoost(index, indexBoost);
+        return this;
+    }
+
+    /**
+     * Sets no fields to be loaded, resulting in only id and type to be returned per field.
+     */
+    public SearchRequestBuilder setNoFields() {
+        sourceBuilder().noFields();
         return this;
     }
 
@@ -315,6 +379,15 @@ public class SearchRequestBuilder extends BaseRequestBuilder<SearchRequest, Sear
     }
 
     /**
+     * Applies when sorting, and controls if scores will be tracked as well. Defaults to
+     * <tt>false</tt>.
+     */
+    public SearchRequestBuilder setTrackScores(boolean trackScores) {
+        sourceBuilder().trackScores(trackScores);
+        return this;
+    }
+
+    /**
      * Adds the fields to load and return as part of the search request. If none are specified,
      * the source of the document will be returned.
      */
@@ -328,6 +401,14 @@ public class SearchRequestBuilder extends BaseRequestBuilder<SearchRequest, Sear
      */
     public SearchRequestBuilder addFacet(AbstractFacetBuilder facet) {
         sourceBuilder().facet(facet);
+        return this;
+    }
+
+    /**
+     * Sets a raw (xcontent) binary representation of facets to use.
+     */
+    public SearchRequestBuilder setFacets(byte[] facets) {
+        sourceBuilder().facets(facets);
         return this;
     }
 
@@ -404,6 +485,91 @@ public class SearchRequestBuilder extends BaseRequestBuilder<SearchRequest, Sear
         return this;
     }
 
+    /**
+     * Sets the source of the request as a json string. Note, settings anything other
+     * than the search type will cause this source to be overridden, consifer using
+     * {@link #setExtraSource(String)}.
+     */
+    public SearchRequestBuilder setSource(String source) {
+        request.source(source);
+        return this;
+    }
+
+    /**
+     * Sets the source of the request as a json string. Allows to set other parameters.
+     */
+    public SearchRequestBuilder setExtraSource(String source) {
+        request.extraSource(source);
+        return this;
+    }
+
+    /**
+     * Sets the source of the request as a json string. Note, settings anything other
+     * than the search type will cause this source to be overridden, consifer using
+     * {@link #setExtraSource(byte[])}.
+     */
+    public SearchRequestBuilder setSource(byte[] source) {
+        request.source(source);
+        return this;
+    }
+
+    /**
+     * Sets the source of the request as a json string. Allows to set other parameters.
+     */
+    public SearchRequestBuilder setExtraSource(byte[] source) {
+        request.extraSource(source);
+        return this;
+    }
+
+    /**
+     * Sets the source of the request as a json string. Note, settings anything other
+     * than the search type will cause this source to be overridden, consifer using
+     * {@link #setExtraSource(byte[])}.
+     */
+    public SearchRequestBuilder setSource(byte[] source, int offset, int length) {
+        request.source(source, offset, length);
+        return this;
+    }
+
+    /**
+     * Sets the source of the request as a json string. Allows to set other parameters.
+     */
+    public SearchRequestBuilder setExtraSource(byte[] source, int offset, int length) {
+        request.extraSource(source, offset, length);
+        return this;
+    }
+
+    /**
+     * Sets the source of the request as a json string. Note, settings anything other
+     * than the search type will cause this source to be overridden, consifer using
+     * {@link #setExtraSource(byte[])}.
+     */
+    public SearchRequestBuilder setSource(XContentBuilder builder) {
+        request.source(builder);
+        return this;
+    }
+
+    /**
+     * Sets the source of the request as a json string. Allows to set other parameters.
+     */
+    public SearchRequestBuilder setExtraSource(XContentBuilder builder) {
+        request.extraSource(builder);
+        return this;
+    }
+
+    /**
+     * Sets the source builder to be used with this request. Note, any operations done
+     * on this require builder before are discarded as this internal builder replaces
+     * what has been built up until this point.
+     */
+    public SearchRequestBuilder internalBuilder(SearchSourceBuilder sourceBuilder) {
+        this.sourceBuilder = sourceBuilder;
+        return this;
+    }
+
+    /**
+     * Returns the internal search source builder used to construct the request.
+     */
     public SearchSourceBuilder internalBuilder() {
         return sourceBuilder();
     }

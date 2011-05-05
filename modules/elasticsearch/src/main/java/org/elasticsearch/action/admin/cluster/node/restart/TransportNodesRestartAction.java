@@ -38,7 +38,6 @@ import org.elasticsearch.transport.TransportService;
 
 import java.io.IOException;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
@@ -66,6 +65,10 @@ public class TransportNodesRestartAction extends TransportNodesOperationAction<N
 
     @Override protected void doExecute(NodesRestartRequest nodesRestartRequest, ActionListener<NodesRestartResponse> listener) {
         listener.onFailure(new ElasticSearchIllegalStateException("restart is disabled (for now) ...."));
+    }
+
+    @Override protected String executor() {
+        return ThreadPool.Names.CACHED;
     }
 
     @Override protected String transportAction() {
@@ -111,7 +114,7 @@ public class TransportNodesRestartAction extends TransportNodesOperationAction<N
             return new NodesRestartResponse.NodeRestartResponse(clusterService.state().nodes().localNode());
         }
         logger.info("Restarting in [{}]", request.delay);
-        threadPool.schedule(new Runnable() {
+        threadPool.schedule(request.delay, ThreadPool.Names.CACHED, new Runnable() {
             @Override public void run() {
                 boolean restartWithWrapper = false;
                 if (System.getProperty("elasticsearch-service") != null) {
@@ -136,7 +139,7 @@ public class TransportNodesRestartAction extends TransportNodesOperationAction<N
                     }
                 }
             }
-        }, request.delay.millis(), TimeUnit.MILLISECONDS);
+        });
         return new NodesRestartResponse.NodeRestartResponse(clusterService.state().nodes().localNode());
     }
 

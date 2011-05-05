@@ -20,28 +20,17 @@
 package org.elasticsearch.gateway.shared;
 
 import org.elasticsearch.ElasticSearchException;
-import org.elasticsearch.cluster.*;
-import org.elasticsearch.cluster.metadata.IndexMetaData;
-import org.elasticsearch.cluster.metadata.IndexTemplateMetaData;
+import org.elasticsearch.cluster.ClusterChangedEvent;
+import org.elasticsearch.cluster.ClusterService;
+import org.elasticsearch.cluster.ClusterState;
+import org.elasticsearch.cluster.ClusterStateListener;
 import org.elasticsearch.cluster.metadata.MetaData;
-import org.elasticsearch.cluster.metadata.MetaDataCreateIndexService;
 import org.elasticsearch.common.StopWatch;
 import org.elasticsearch.common.component.AbstractLifecycleComponent;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.gateway.Gateway;
 import org.elasticsearch.gateway.GatewayException;
-
-import java.io.IOException;
-import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-
-import static java.util.concurrent.Executors.*;
-import static org.elasticsearch.cluster.ClusterState.*;
-import static org.elasticsearch.cluster.metadata.MetaData.*;
-import static org.elasticsearch.common.unit.TimeValue.*;
-import static org.elasticsearch.common.util.concurrent.EsExecutors.*;
+import org.elasticsearch.threadpool.ThreadPool;
 
 /**
  * @author kimchy (shay.banon)
@@ -50,39 +39,27 @@ public abstract class SharedStorageGateway extends AbstractLifecycleComponent<Ga
 
     private final ClusterService clusterService;
 
-    private final MetaDataCreateIndexService createIndexService;
+    private final ThreadPool threadPool;
 
-    private volatile boolean performedStateRecovery = false;
-
-    private volatile ExecutorService executor;
-
-    public SharedStorageGateway(Settings settings, ClusterService clusterService, MetaDataCreateIndexService createIndexService) {
+    public SharedStorageGateway(Settings settings, ThreadPool threadPool, ClusterService clusterService) {
         super(settings);
+        this.threadPool = threadPool;
         this.clusterService = clusterService;
-        this.createIndexService = createIndexService;
     }
 
     @Override protected void doStart() throws ElasticSearchException {
-        this.executor = newSingleThreadExecutor(daemonThreadFactory(settings, "gateway"));
         clusterService.add(this);
     }
 
     @Override protected void doStop() throws ElasticSearchException {
         clusterService.remove(this);
-        executor.shutdown();
-        try {
-            executor.awaitTermination(10, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            // ignore
-        }
     }
 
     @Override protected void doClose() throws ElasticSearchException {
     }
 
     @Override public void performStateRecovery(final GatewayStateRecoveredListener listener) throws GatewayException {
-        performedStateRecovery = true;
-        executor.execute(new Runnable() {
+        threadPool.cached().execute(new Runnable() {
             @Override public void run() {
                 logger.debug("reading state from gateway {} ...", this);
                 StopWatch stopWatch = new StopWatch().start();
@@ -92,9 +69,9 @@ public abstract class SharedStorageGateway extends AbstractLifecycleComponent<Ga
                     logger.debug("read state from gateway {}, took {}", this, stopWatch.stop().totalTime());
                     if (metaData == null) {
                         logger.debug("no state read from gateway");
-                        listener.onSuccess();
+                        listener.onSuccess(ClusterState.builder().build());
                     } else {
-                        updateClusterStateFromGateway(metaData, listener);
+                        listener.onSuccess(ClusterState.builder().metaData(metaData).build());
                     }
                 } catch (Exception e) {
                     logger.error("failed to read from gateway", e);
@@ -108,14 +85,17 @@ public abstract class SharedStorageGateway extends AbstractLifecycleComponent<Ga
         if (!lifecycle.started()) {
             return;
         }
-        if (!performedStateRecovery) {
+
+        // nothing to do until we actually recover from the gateway or any other block indicates we need to disable persistency
+        if (event.state().blocks().disableStatePersistence()) {
             return;
         }
+
         if (event.localNodeMaster()) {
             if (!event.metaDataChanged()) {
                 return;
             }
-            executor.execute(new Runnable() {
+            threadPool.cached().execute(new Runnable() {
                 @Override public void run() {
                     logger.debug("writing to gateway {} ...", this);
                     StopWatch stopWatch = new StopWatch().start();
@@ -129,53 +109,6 @@ public abstract class SharedStorageGateway extends AbstractLifecycleComponent<Ga
                 }
             });
         }
-    }
-
-    private void updateClusterStateFromGateway(final MetaData fMetaData, final GatewayStateRecoveredListener listener) {
-        final AtomicInteger indicesCounter = new AtomicInteger(fMetaData.indices().size());
-        clusterService.submitStateUpdateTask("gateway (recovered meta-data)", new ProcessedClusterStateUpdateTask() {
-            @Override public ClusterState execute(ClusterState currentState) {
-                MetaData.Builder metaDataBuilder = newMetaDataBuilder()
-                        .metaData(currentState.metaData());
-                // mark the metadata as read from gateway
-                metaDataBuilder.markAsRecoveredFromGateway();
-
-                // add the index templates
-                for (Map.Entry<String, IndexTemplateMetaData> entry : fMetaData.templates().entrySet()) {
-                    metaDataBuilder.put(entry.getValue());
-                }
-
-                return newClusterStateBuilder().state(currentState).metaData(metaDataBuilder).build();
-            }
-
-            @Override public void clusterStateProcessed(ClusterState clusterState) {
-                // go over the meta data and create indices, we don't really need to copy over
-                // the meta data per index, since we create the index and it will be added automatically
-                for (final IndexMetaData indexMetaData : fMetaData) {
-                    try {
-                        createIndexService.createIndex(new MetaDataCreateIndexService.Request(MetaDataCreateIndexService.Request.Origin.GATEWAY, "gateway", indexMetaData.index())
-                                .settings(indexMetaData.settings())
-                                .mappingsMetaData(indexMetaData.mappings())
-                                .state(indexMetaData.state())
-                                .timeout(timeValueSeconds(30)),
-
-                                new MetaDataCreateIndexService.Listener() {
-                                    @Override public void onResponse(MetaDataCreateIndexService.Response response) {
-                                        if (indicesCounter.decrementAndGet() == 0) {
-                                            listener.onSuccess();
-                                        }
-                                    }
-
-                                    @Override public void onFailure(Throwable t) {
-                                        logger.error("failed to create index [{}]", t, indexMetaData.index());
-                                    }
-                                });
-                    } catch (IOException e) {
-                        logger.error("failed to create index [{}]", e, indexMetaData.index());
-                    }
-                }
-            }
-        });
     }
 
     protected abstract MetaData read() throws ElasticSearchException;

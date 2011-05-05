@@ -19,11 +19,14 @@
 
 package org.elasticsearch.search.internal;
 
+import org.apache.lucene.index.ExtendedIndexSearcher;
+import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.search.*;
 import org.elasticsearch.common.collect.Lists;
 import org.elasticsearch.common.collect.Maps;
+import org.elasticsearch.common.lucene.MinimumScoreCollector;
 import org.elasticsearch.common.lucene.MultiCollector;
-import org.elasticsearch.common.lucene.search.ExtendedIndexSearcher;
+import org.elasticsearch.common.lucene.search.FilteredCollector;
 import org.elasticsearch.index.engine.Engine;
 import org.elasticsearch.search.dfs.CachedDfSource;
 
@@ -42,7 +45,9 @@ public class ContextIndexSearcher extends ExtendedIndexSearcher {
         public static final String NA = "_na_";
     }
 
-    private SearchContext searchContext;
+    private final SearchContext searchContext;
+
+    private final IndexReader reader;
 
     private CachedDfSource dfSource;
 
@@ -53,6 +58,7 @@ public class ContextIndexSearcher extends ExtendedIndexSearcher {
     public ContextIndexSearcher(SearchContext searchContext, Engine.Searcher searcher) {
         super(searcher.searcher());
         this.searchContext = searchContext;
+        this.reader = searcher.searcher().getIndexReader();
     }
 
     public void dfSource(CachedDfSource dfSource) {
@@ -69,6 +75,10 @@ public class ContextIndexSearcher extends ExtendedIndexSearcher {
             scopeCollectors.put(scope, collectors);
         }
         collectors.add(collector);
+    }
+
+    public List<Collector> removeCollectors(String scope) {
+        return scopeCollectors.remove(scope);
     }
 
     public boolean hasCollectors(String scope) {
@@ -115,7 +125,29 @@ public class ContextIndexSearcher extends ExtendedIndexSearcher {
         return query.weight(dfSource);
     }
 
+    // override from the Searcher to allow to control if scores will be tracked or not
+    // LUCENE MONITOR - We override the logic here to apply our own flags for track scores
+    @Override public TopFieldDocs search(Weight weight, Filter filter, int nDocs,
+                                         Sort sort, boolean fillFields) throws IOException {
+        int limit = reader.maxDoc();
+        if (limit == 0) {
+            limit = 1;
+        }
+        nDocs = Math.min(nDocs, limit);
+
+        TopFieldCollector collector = TopFieldCollector.create(sort, nDocs,
+                fillFields, searchContext.trackScores(), searchContext.trackScores(), !weight.scoresDocsOutOfOrder());
+        search(weight, filter, collector);
+        return (TopFieldDocs) collector.topDocs();
+    }
+
     @Override public void search(Weight weight, Filter filter, Collector collector) throws IOException {
+        if (searchContext.parsedFilter() != null && Scopes.MAIN.equals(processingScope)) {
+            // this will only get applied to the actual search collector and not
+            // to any scoped collectors, also, it will only be applied to the main collector
+            // since that is where the filter should only work
+            collector = new FilteredCollector(collector, searchContext.parsedFilter());
+        }
         if (searchContext.timeout() != null) {
             collector = new TimeLimitingCollector(collector, searchContext.timeout().millis());
         }
@@ -125,6 +157,11 @@ public class ContextIndexSearcher extends ExtendedIndexSearcher {
                 collector = new MultiCollector(collector, collectors.toArray(new Collector[collectors.size()]));
             }
         }
+        // apply the minimum score after multi collector so we filter facets as well
+        if (searchContext.minimumScore() != null) {
+            collector = new MinimumScoreCollector(collector, searchContext.minimumScore());
+        }
+
         // we only compute the doc id set once since within a context, we execute the same query always...
         if (searchContext.timeout() != null) {
             searchContext.queryResult().searchTimedOut(false);

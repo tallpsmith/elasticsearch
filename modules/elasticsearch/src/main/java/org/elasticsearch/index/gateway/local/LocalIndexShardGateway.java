@@ -63,6 +63,7 @@ public class LocalIndexShardGateway extends AbstractIndexShardComponent implemen
         TimeValue sync = componentSettings.getAsTime("sync", TimeValue.timeValueSeconds(1));
         if (sync.millis() > 0) {
             this.indexShard.translog().syncOnEachOperation(false);
+            // we don't need to execute the sync on a different thread, just do it on the scheduler thread
             flushScheduler = threadPool.scheduleWithFixedDelay(new Sync(), sync);
         } else if (sync.millis() == 0) {
             flushScheduler = null;
@@ -93,10 +94,23 @@ public class LocalIndexShardGateway extends AbstractIndexShardComponent implemen
         recoveryStatus.index().updateVersion(version);
         recoveryStatus.index().time(System.currentTimeMillis() - recoveryStatus.index().startTime());
 
+        // since we recover from local, just fill the files and size
+        try {
+            int numberOfFiles = 0;
+            long totalSizeInBytes = 0;
+            for (String name : indexShard.store().directory().listAll()) {
+                numberOfFiles++;
+                totalSizeInBytes += indexShard.store().directory().fileLength(name);
+            }
+            recoveryStatus.index().files(numberOfFiles, totalSizeInBytes, numberOfFiles, totalSizeInBytes);
+        } catch (Exception e) {
+            // ignore
+        }
+
         recoveryStatus.translog().startTime(System.currentTimeMillis());
         if (version == -1) {
             // no translog files, bail
-            indexShard.start();
+            indexShard.start("post recovery from gateway, no translog");
             // no index, just start the shard and bail
             recoveryStatus.translog().time(System.currentTimeMillis() - recoveryStatus.index().startTime());
             return;
@@ -119,7 +133,7 @@ public class LocalIndexShardGateway extends AbstractIndexShardComponent implemen
         if (!recoveringTranslogFile.exists()) {
             // no translog to recovery from, start and bail
             // no translog files, bail
-            indexShard.start();
+            indexShard.start("post recovery from gateway, no translog");
             // no index, just start the shard and bail
             recoveryStatus.translog().time(System.currentTimeMillis() - recoveryStatus.index().startTime());
             return;
@@ -130,15 +144,24 @@ public class LocalIndexShardGateway extends AbstractIndexShardComponent implemen
         try {
             InputStreamStreamInput si = new InputStreamStreamInput(new FileInputStream(recoveringTranslogFile));
             while (true) {
-                int opSize = si.readInt();
-                Translog.Operation operation = TranslogStreams.readTranslogOperation(si);
+                Translog.Operation operation;
+                try {
+                    int opSize = si.readInt();
+                    operation = TranslogStreams.readTranslogOperation(si);
+                } catch (EOFException e) {
+                    // ignore, not properly written the last op
+                    break;
+                } catch (IOException e) {
+                    // ignore, not properly written last op
+                    break;
+                }
                 recoveryStatus.translog().addTranslogOperations(1);
                 indexShard.performRecoveryOperation(operation);
             }
-        } catch (EOFException e) {
-            // ignore this exception, its fine
-        } catch (IOException e) {
-            // ignore this as well
+        } catch (Throwable e) {
+            // we failed to recovery, make sure to delete the translog file (and keep the recovering one)
+            indexShard.translog().close(true);
+            throw new IndexShardGatewayRecoveryException(shardId, "failed to recover shard", e);
         }
         indexShard.performRecoveryFinalization(true);
 
@@ -161,6 +184,10 @@ public class LocalIndexShardGateway extends AbstractIndexShardComponent implemen
 
     @Override public SnapshotStatus currentSnapshotStatus() {
         return null;
+    }
+
+    @Override public boolean requiresSnapshot() {
+        return false;
     }
 
     @Override public boolean requiresSnapshotScheduling() {

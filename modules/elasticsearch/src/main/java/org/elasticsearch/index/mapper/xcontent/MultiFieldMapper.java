@@ -171,6 +171,12 @@ public class MultiFieldMapper implements XContentMapper, IncludeInAllMapper {
         }
     }
 
+    @Override public void includeInAllIfNotSet(Boolean includeInAll) {
+        if (includeInAll != null && defaultMapper != null && (defaultMapper instanceof IncludeInAllMapper)) {
+            ((IncludeInAllMapper) defaultMapper).includeInAllIfNotSet(includeInAll);
+        }
+    }
+
     public ContentPath.Type pathType() {
         return pathType;
     }
@@ -254,6 +260,15 @@ public class MultiFieldMapper implements XContentMapper, IncludeInAllMapper {
         }
     }
 
+    @Override public void close() {
+        if (defaultMapper != null) {
+            defaultMapper.close();
+        }
+        for (XContentMapper mapper : mappers.values()) {
+            mapper.close();
+        }
+    }
+
     @Override public void traverse(FieldMapperListener fieldMapperListener) {
         if (defaultMapper != null) {
             defaultMapper.traverse(fieldMapperListener);
@@ -263,7 +278,7 @@ public class MultiFieldMapper implements XContentMapper, IncludeInAllMapper {
         }
     }
 
-    @Override public void toXContent(XContentBuilder builder, Params params) throws IOException {
+    @Override public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject(name);
         builder.field("type", CONTENT_TYPE);
         if (pathType != Defaults.PATH_TYPE) {
@@ -280,5 +295,6 @@ public class MultiFieldMapper implements XContentMapper, IncludeInAllMapper {
         builder.endObject();
 
         builder.endObject();
+        return builder;
     }
 }

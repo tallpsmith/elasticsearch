@@ -32,7 +32,7 @@ import org.elasticsearch.rest.*;
 import java.io.IOException;
 
 import static org.elasticsearch.rest.RestRequest.Method.*;
-import static org.elasticsearch.rest.RestResponse.Status.*;
+import static org.elasticsearch.rest.RestStatus.*;
 import static org.elasticsearch.rest.action.support.RestXContentBuilder.*;
 
 /**
@@ -61,6 +61,7 @@ public class RestAnalyzeAction extends BaseRestHandler {
         }
 
         AnalyzeRequest analyzeRequest = new AnalyzeRequest(request.param("index"), text);
+        analyzeRequest.preferLocal(request.paramAsBoolean("prefer_local", analyzeRequest.preferLocalShard()));
         analyzeRequest.analyzer(request.param("analyzer"));
         client.admin().indices().analyze(analyzeRequest, new ActionListener<AnalyzeResponse>() {
             @Override public void onResponse(AnalyzeResponse response) {

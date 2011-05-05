@@ -29,6 +29,7 @@ import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Streamable;
 import org.elasticsearch.common.io.stream.VoidStreamable;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.BaseTransportRequestHandler;
 import org.elasticsearch.transport.TransportChannel;
@@ -60,8 +61,16 @@ public class NodeMappingCreatedAction extends AbstractComponent {
         transportService.registerHandler(NodeMappingCreatedTransportHandler.ACTION, new NodeMappingCreatedTransportHandler());
     }
 
-    public void add(Listener listener) {
+    public void add(final Listener listener, TimeValue timeout) {
         listeners.add(listener);
+        threadPool.schedule(timeout, ThreadPool.Names.CACHED, new Runnable() {
+            @Override public void run() {
+                boolean removed = listeners.remove(listener);
+                if (removed) {
+                    listener.onTimeout();
+                }
+            }
+        });
     }
 
     public void remove(Listener listener) {
@@ -71,14 +80,14 @@ public class NodeMappingCreatedAction extends AbstractComponent {
     public void nodeMappingCreated(final NodeMappingCreatedResponse response) throws ElasticSearchException {
         DiscoveryNodes nodes = clusterService.state().nodes();
         if (nodes.localNodeMaster()) {
-            threadPool.execute(new Runnable() {
+            threadPool.cached().execute(new Runnable() {
                 @Override public void run() {
                     innerNodeIndexCreated(response);
                 }
             });
         } else {
             transportService.sendRequest(clusterService.state().nodes().masterNode(),
-                    NodeMappingCreatedTransportHandler.ACTION, response, VoidTransportResponseHandler.INSTANCE);
+                    NodeMappingCreatedTransportHandler.ACTION, response, VoidTransportResponseHandler.INSTANCE_SAME);
         }
     }
 
@@ -91,6 +100,8 @@ public class NodeMappingCreatedAction extends AbstractComponent {
 
     public static interface Listener {
         void onNodeMappingCreated(NodeMappingCreatedResponse response);
+
+        void onTimeout();
     }
 
     private class NodeMappingCreatedTransportHandler extends BaseTransportRequestHandler<NodeMappingCreatedResponse> {
@@ -104,6 +115,10 @@ public class NodeMappingCreatedAction extends AbstractComponent {
         @Override public void messageReceived(NodeMappingCreatedResponse response, TransportChannel channel) throws Exception {
             innerNodeIndexCreated(response);
             channel.sendResponse(VoidStreamable.INSTANCE);
+        }
+
+        @Override public String executor() {
+            return ThreadPool.Names.SAME;
         }
     }
 

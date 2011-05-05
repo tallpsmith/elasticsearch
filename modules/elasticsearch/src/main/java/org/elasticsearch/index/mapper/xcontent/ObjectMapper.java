@@ -28,12 +28,12 @@ import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.mapper.*;
-import org.elasticsearch.index.mapper.xcontent.ip.IpFieldMapper;
 
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 import static org.elasticsearch.common.collect.ImmutableMap.*;
 import static org.elasticsearch.common.collect.Lists.*;
@@ -52,15 +52,21 @@ public class ObjectMapper implements XContentMapper, IncludeInAllMapper {
 
     public static class Defaults {
         public static final boolean ENABLED = true;
-        public static final boolean DYNAMIC = true;
+        public static final Dynamic DYNAMIC = null; // not set, inherited from father
         public static final ContentPath.Type PATH_TYPE = ContentPath.Type.FULL;
+    }
+
+    public static enum Dynamic {
+        TRUE,
+        FALSE,
+        STRICT
     }
 
     public static class Builder<T extends Builder, Y extends ObjectMapper> extends XContentMapper.Builder<T, Y> {
 
         protected boolean enabled = Defaults.ENABLED;
 
-        protected boolean dynamic = Defaults.DYNAMIC;
+        protected Dynamic dynamic = Defaults.DYNAMIC;
 
         protected ContentPath.Type pathType = Defaults.PATH_TYPE;
 
@@ -78,7 +84,7 @@ public class ObjectMapper implements XContentMapper, IncludeInAllMapper {
             return builder;
         }
 
-        public T dynamic(boolean dynamic) {
+        public T dynamic(Dynamic dynamic) {
             this.dynamic = dynamic;
             return builder;
         }
@@ -113,12 +119,12 @@ public class ObjectMapper implements XContentMapper, IncludeInAllMapper {
             context.path().pathType(origPathType);
             context.path().remove();
 
-            objectMapper.includeInAll(includeInAll);
+            objectMapper.includeInAllIfNotSet(includeInAll);
 
             return (Y) objectMapper;
         }
 
-        protected ObjectMapper createMapper(String name, boolean enabled, boolean dynamic, ContentPath.Type pathType, Map<String, XContentMapper> mappers) {
+        protected ObjectMapper createMapper(String name, boolean enabled, Dynamic dynamic, ContentPath.Type pathType, Map<String, XContentMapper> mappers) {
             return new ObjectMapper(name, enabled, dynamic, pathType, mappers);
         }
     }
@@ -133,7 +139,12 @@ public class ObjectMapper implements XContentMapper, IncludeInAllMapper {
                 Object fieldNode = entry.getValue();
 
                 if (fieldName.equals("dynamic")) {
-                    builder.dynamic(nodeBooleanValue(fieldNode));
+                    String value = fieldNode.toString();
+                    if (value.equalsIgnoreCase("strict")) {
+                        builder.dynamic(Dynamic.STRICT);
+                    } else {
+                        builder.dynamic(nodeBooleanValue(fieldNode) ? Dynamic.TRUE : Dynamic.FALSE);
+                    }
                 } else if (fieldName.equals("type")) {
                     String type = fieldNode.toString();
                     if (!type.equals("object")) {
@@ -195,7 +206,7 @@ public class ObjectMapper implements XContentMapper, IncludeInAllMapper {
 
     private final boolean enabled;
 
-    private final boolean dynamic;
+    private final Dynamic dynamic;
 
     private final ContentPath.Type pathType;
 
@@ -210,11 +221,11 @@ public class ObjectMapper implements XContentMapper, IncludeInAllMapper {
     }
 
 
-    protected ObjectMapper(String name, boolean enabled, boolean dynamic, ContentPath.Type pathType) {
+    protected ObjectMapper(String name, boolean enabled, Dynamic dynamic, ContentPath.Type pathType) {
         this(name, enabled, dynamic, pathType, null);
     }
 
-    ObjectMapper(String name, boolean enabled, boolean dynamic, ContentPath.Type pathType, Map<String, XContentMapper> mappers) {
+    ObjectMapper(String name, boolean enabled, Dynamic dynamic, ContentPath.Type pathType, Map<String, XContentMapper> mappers) {
         this.name = name;
         this.enabled = enabled;
         this.dynamic = dynamic;
@@ -241,9 +252,21 @@ public class ObjectMapper implements XContentMapper, IncludeInAllMapper {
         }
     }
 
+    @Override public void includeInAllIfNotSet(Boolean includeInAll) {
+        if (this.includeInAll == null) {
+            this.includeInAll = includeInAll;
+        }
+        // when called from outside, apply this on all the inner mappers
+        for (XContentMapper mapper : mappers.values()) {
+            if (mapper instanceof IncludeInAllMapper) {
+                ((IncludeInAllMapper) mapper).includeInAllIfNotSet(includeInAll);
+            }
+        }
+    }
+
     public ObjectMapper putMapper(XContentMapper mapper) {
         if (mapper instanceof IncludeInAllMapper) {
-            ((IncludeInAllMapper) mapper).includeInAll(includeInAll);
+            ((IncludeInAllMapper) mapper).includeInAllIfNotSet(includeInAll);
         }
         synchronized (mutex) {
             mappers = newMapBuilder(mappers).put(mapper.name(), mapper).immutableMap();
@@ -255,6 +278,10 @@ public class ObjectMapper implements XContentMapper, IncludeInAllMapper {
         for (XContentMapper mapper : mappers.values()) {
             mapper.traverse(fieldMapperListener);
         }
+    }
+
+    public final Dynamic dynamic() {
+        return this.dynamic;
     }
 
     public void parse(ParseContext context) throws IOException {
@@ -290,6 +317,8 @@ public class ObjectMapper implements XContentMapper, IncludeInAllMapper {
                 currentFieldName = parser.currentName();
             } else if (token == XContentParser.Token.VALUE_NULL) {
                 serializeNullValue(context, currentFieldName);
+            } else if (token == null) {
+                throw new MapperParsingException("object_mapper [" + name + "] tried to parse as object, but got EOF, has a concrete value been provided to it?");
             } else if (token.isValue()) {
                 serializeValue(context, currentFieldName, token);
             }
@@ -314,7 +343,13 @@ public class ObjectMapper implements XContentMapper, IncludeInAllMapper {
         if (objectMapper != null) {
             objectMapper.parse(context);
         } else {
-            if (dynamic) {
+            Dynamic dynamic = this.dynamic;
+            if (dynamic == null) {
+                dynamic = context.root().dynamic();
+            }
+            if (dynamic == Dynamic.STRICT) {
+                throw new StrictDynamicMappingException(currentFieldName);
+            } else if (dynamic == Dynamic.TRUE) {
                 // we sync here just so we won't add it twice. Its not the end of the world
                 // to sync here since next operations will get it before
                 synchronized (mutex) {
@@ -376,7 +411,14 @@ public class ObjectMapper implements XContentMapper, IncludeInAllMapper {
             mapper.parse(context);
             return;
         }
-        if (!dynamic) {
+        Dynamic dynamic = this.dynamic;
+        if (dynamic == null) {
+            dynamic = context.root().dynamic();
+        }
+        if (dynamic == Dynamic.STRICT) {
+            throw new StrictDynamicMappingException(currentFieldName);
+        }
+        if (dynamic == Dynamic.FALSE) {
             return;
         }
         // we sync here since we don't want to add this field twice to the document mapper
@@ -411,20 +453,21 @@ public class ObjectMapper implements XContentMapper, IncludeInAllMapper {
                         }
                     }
                 }
+                // DON'T do automatic ip detection logic, since it messes up with docs that have hosts and ips
                 // check if its an ip
-                if (!resolved && text.indexOf('.') != -1) {
-                    try {
-                        IpFieldMapper.ipToLong(text);
-                        XContentMapper.Builder builder = context.root().findTemplateBuilder(context, currentFieldName, "ip");
-                        if (builder == null) {
-                            builder = ipField(currentFieldName);
-                        }
-                        mapper = builder.build(builderContext);
-                        resolved = true;
-                    } catch (Exception e) {
-                        // failure to parse, not ip...
-                    }
-                }
+//                if (!resolved && text.indexOf('.') != -1) {
+//                    try {
+//                        IpFieldMapper.ipToLong(text);
+//                        XContentMapper.Builder builder = context.root().findTemplateBuilder(context, currentFieldName, "ip");
+//                        if (builder == null) {
+//                            builder = ipField(currentFieldName);
+//                        }
+//                        mapper = builder.build(builderContext);
+//                        resolved = true;
+//                    } catch (Exception e) {
+//                        // failure to parse, not ip...
+//                    }
+//                }
                 if (!resolved) {
                     XContentMapper.Builder builder = context.root().findTemplateBuilder(context, currentFieldName, "string");
                     if (builder == null) {
@@ -547,8 +590,15 @@ public class ObjectMapper implements XContentMapper, IncludeInAllMapper {
 
     }
 
-    @Override public void toXContent(XContentBuilder builder, Params params) throws IOException {
+    @Override public void close() {
+        for (XContentMapper mapper : mappers.values()) {
+            mapper.close();
+        }
+    }
+
+    @Override public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         toXContent(builder, params, null, XContentMapper.EMPTY_ARRAY);
+        return builder;
     }
 
     public void toXContent(XContentBuilder builder, Params params, ToXContent custom, XContentMapper... additionalMappers) throws IOException {
@@ -556,8 +606,16 @@ public class ObjectMapper implements XContentMapper, IncludeInAllMapper {
         if (mappers.isEmpty()) { // only write the object content type if there are no properties, otherwise, it is automatically detected
             builder.field("type", CONTENT_TYPE);
         }
-        if (dynamic != Defaults.DYNAMIC) {
-            builder.field("dynamic", dynamic);
+        // grr, ugly! on root, dynamic defaults to TRUE, on childs, it defaults to null to
+        // inherit the root behavior
+        if (this instanceof RootObjectMapper) {
+            if (dynamic != Dynamic.TRUE) {
+                builder.field("dynamic", dynamic.name().toLowerCase());
+            }
+        } else {
+            if (dynamic != Defaults.DYNAMIC) {
+                builder.field("dynamic", dynamic.name().toLowerCase());
+            }
         }
         if (enabled != Defaults.ENABLED) {
             builder.field("enabled", enabled);
@@ -575,8 +633,11 @@ public class ObjectMapper implements XContentMapper, IncludeInAllMapper {
 
         doXContent(builder, params);
 
+        // sort the mappers so we get consistent serialization format
+        TreeMap<String, XContentMapper> sortedMappers = new TreeMap<String, XContentMapper>(mappers);
+
         // check internal mappers first (this is only relevant for root object)
-        for (XContentMapper mapper : mappers.values()) {
+        for (XContentMapper mapper : sortedMappers.values()) {
             if (mapper instanceof InternalMapper) {
                 mapper.toXContent(builder, params);
             }
@@ -589,7 +650,7 @@ public class ObjectMapper implements XContentMapper, IncludeInAllMapper {
 
         if (!mappers.isEmpty()) {
             builder.startObject("properties");
-            for (XContentMapper mapper : mappers.values()) {
+            for (XContentMapper mapper : sortedMappers.values()) {
                 if (!(mapper instanceof InternalMapper)) {
                     mapper.toXContent(builder, params);
                 }

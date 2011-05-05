@@ -26,12 +26,14 @@ import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
+import org.elasticsearch.common.unit.TimeValue;
 
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.net.UnknownHostException;
 import java.util.Collection;
+import java.util.concurrent.TimeUnit;
 
 /**
  * @author kimchy (shay.banon)
@@ -53,9 +55,11 @@ public class NetworkService extends AbstractComponent {
         public static final String TCP_BLOCKING = "network.tcp.blocking";
         public static final String TCP_BLOCKING_SERVER = "network.tcp.blocking_server";
         public static final String TCP_BLOCKING_CLIENT = "network.tcp.blocking_client";
+        public static final String TCP_CONNECT_TIMEOUT = "network.tcp.connect_timeout";
 
-        public static ByteSizeValue TCP_DEFAULT_SEND_BUFFER_SIZE = new ByteSizeValue(32, ByteSizeUnit.KB);
-        public static ByteSizeValue TCP_DEFAULT_RECEIVE_BUFFER_SIZE = new ByteSizeValue(32, ByteSizeUnit.KB);
+        public static final ByteSizeValue TCP_DEFAULT_SEND_BUFFER_SIZE = new ByteSizeValue(32, ByteSizeUnit.KB);
+        public static final ByteSizeValue TCP_DEFAULT_RECEIVE_BUFFER_SIZE = new ByteSizeValue(32, ByteSizeUnit.KB);
+        public static final TimeValue TCP_DEFAULT_CONNECT_TIMEOUT = new TimeValue(30, TimeUnit.SECONDS);
     }
 
     public static interface CustomNameResolver {
@@ -110,6 +114,7 @@ public class NetworkService extends AbstractComponent {
         if (host == null) {
             return null;
         }
+        String origHost = host;
         if ((host.startsWith("#") && host.endsWith("#")) || (host.startsWith("_") && host.endsWith("_"))) {
             host = host.substring(1, host.length() - 1);
 
@@ -129,17 +134,25 @@ public class NetworkService extends AbstractComponent {
                     return NetworkUtils.getFirstNonLoopbackAddress(NetworkUtils.getIpStackType());
                 }
             } else {
+                NetworkUtils.StackType stackType = NetworkUtils.getIpStackType();
+                if (host.toLowerCase().endsWith(":ipv4")) {
+                    stackType = NetworkUtils.StackType.IPv4;
+                    host = host.substring(0, host.length() - 5);
+                } else if (host.toLowerCase().endsWith(":ipv6")) {
+                    stackType = NetworkUtils.StackType.IPv6;
+                    host = host.substring(0, host.length() - 5);
+                }
                 Collection<NetworkInterface> allInterfs = NetworkUtils.getAllAvailableInterfaces();
                 for (NetworkInterface ni : allInterfs) {
                     if (!ni.isUp() || ni.isLoopback()) {
                         continue;
                     }
                     if (host.equals(ni.getName()) || host.equals(ni.getDisplayName())) {
-                        return NetworkUtils.getFirstNonLoopbackAddress(ni, NetworkUtils.getIpStackType());
+                        return NetworkUtils.getFirstNonLoopbackAddress(ni, stackType);
                     }
                 }
             }
-            throw new IOException("Failed to find network interface for [" + host + "]");
+            throw new IOException("Failed to find network interface for [" + origHost + "]");
         }
         return InetAddress.getByName(host);
     }

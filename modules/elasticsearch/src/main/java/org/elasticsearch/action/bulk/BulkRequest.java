@@ -31,6 +31,7 @@ import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.xcontent.XContent;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentParser;
+import org.elasticsearch.index.VersionType;
 
 import java.io.IOException;
 import java.util.List;
@@ -112,6 +113,9 @@ public class BulkRequest implements ActionRequest {
             String routing = null;
             String parent = null;
             String opType = null;
+            long version = 0;
+            VersionType versionType = VersionType.INTERNAL;
+            String percolate = null;
 
             String currentFieldName = null;
             while ((token = parser.nextToken()) != XContentParser.Token.END_OBJECT) {
@@ -124,18 +128,24 @@ public class BulkRequest implements ActionRequest {
                         type = parser.text();
                     } else if ("_id".equals(currentFieldName)) {
                         id = parser.text();
-                    } else if ("_routing".equals(currentFieldName)) {
+                    } else if ("_routing".equals(currentFieldName) || "routing".equals(currentFieldName)) {
                         routing = parser.text();
-                    } else if ("_parent".equals(currentFieldName)) {
+                    } else if ("_parent".equals(currentFieldName) || "parent".equals(currentFieldName)) {
                         parent = parser.text();
                     } else if ("op_type".equals(currentFieldName) || "opType".equals(currentFieldName)) {
                         opType = parser.text();
+                    } else if ("_version".equals(currentFieldName) || "version".equals(currentFieldName)) {
+                        version = parser.longValue();
+                    } else if ("_version_type".equals(currentFieldName) || "_versionType".equals(currentFieldName) || "version_type".equals(currentFieldName) || "versionType".equals(currentFieldName)) {
+                        versionType = VersionType.fromString(parser.text());
+                    } else if ("percolate".equals(currentFieldName)) {
+                        percolate = parser.textOrNull();
                     }
                 }
             }
 
             if ("delete".equals(action)) {
-                add(new DeleteRequest(index, type, id).routing(routing));
+                add(new DeleteRequest(index, type, id).parent(parent).versionType(versionType).routing(routing));
             } else {
                 nextMarker = findNextMarker(marker, from, data, length);
                 if (nextMarker == -1) {
@@ -144,17 +154,20 @@ public class BulkRequest implements ActionRequest {
                 // order is important, we set parent after routing, so routing will be set to parent if not set explicitly
                 if ("index".equals(action)) {
                     if (opType == null) {
-                        add(new IndexRequest(index, type, id).routing(routing).parent(parent)
-                                .source(data, from, nextMarker - from, contentUnsafe));
+                        add(new IndexRequest(index, type, id).routing(routing).parent(parent).version(version).versionType(versionType)
+                                .source(data, from, nextMarker - from, contentUnsafe)
+                                .percolate(percolate));
                     } else {
-                        add(new IndexRequest(index, type, id).routing(routing).parent(parent)
+                        add(new IndexRequest(index, type, id).routing(routing).parent(parent).version(version).versionType(versionType)
                                 .create("create".equals(opType))
-                                .source(data, from, nextMarker - from, contentUnsafe));
+                                .source(data, from, nextMarker - from, contentUnsafe)
+                                .percolate(percolate));
                     }
                 } else if ("create".equals(action)) {
-                    add(new IndexRequest(index, type, id).routing(routing).parent(parent)
+                    add(new IndexRequest(index, type, id).routing(routing).parent(parent).version(version).versionType(versionType)
                             .create(true)
-                            .source(data, from, nextMarker - from, contentUnsafe));
+                            .source(data, from, nextMarker - from, contentUnsafe)
+                            .percolate(percolate));
                 }
                 // move pointers
                 from = nextMarker + 1;

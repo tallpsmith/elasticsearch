@@ -19,6 +19,7 @@
 
 package org.elasticsearch.index.mapper.xcontent.geo;
 
+import org.elasticsearch.common.RamUsage;
 import org.elasticsearch.common.thread.ThreadLocals;
 import org.elasticsearch.index.field.data.doubles.DoubleFieldData;
 import org.elasticsearch.index.search.geo.GeoHashUtils;
@@ -64,11 +65,20 @@ public class MultiValueGeoPointFieldData extends GeoPointFieldData {
     };
 
     // order with value 0 indicates no value
-    private final int[][] order;
+    private final int[][] ordinals;
 
-    public MultiValueGeoPointFieldData(String fieldName, int[][] order, double[] lat, double[] lon) {
+    public MultiValueGeoPointFieldData(String fieldName, int[][] ordinals, double[] lat, double[] lon) {
         super(fieldName, lat, lon);
-        this.order = order;
+        this.ordinals = ordinals;
+    }
+
+    @Override protected long computeSizeInBytes() {
+        long size = super.computeSizeInBytes();
+        size += RamUsage.NUM_BYTES_ARRAY_HEADER; // for the top level array
+        for (int[] ordinal : ordinals) {
+            size += RamUsage.NUM_BYTES_INT * ordinal.length + RamUsage.NUM_BYTES_ARRAY_HEADER;
+        }
+        return size;
     }
 
     @Override public boolean multiValued() {
@@ -76,98 +86,156 @@ public class MultiValueGeoPointFieldData extends GeoPointFieldData {
     }
 
     @Override public boolean hasValue(int docId) {
-        return order[docId] != null;
+        for (int[] ordinal : ordinals) {
+            if (ordinal[docId] != 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override public void forEachValueInDoc(int docId, StringValueInDocProc proc) {
-        int[] docOrders = order[docId];
-        if (docOrders == null) {
-            return;
+        boolean found = false;
+        for (int[] ordinal : ordinals) {
+            int loc = ordinal[docId];
+            if (loc != 0) {
+                found = true;
+                proc.onValue(docId, GeoHashUtils.encode(lat[loc], lon[loc]));
+            }
         }
-        for (int docOrder : docOrders) {
-            proc.onValue(docId, GeoHashUtils.encode(lat[docOrder], lon[docOrder]));
+        if (!found) {
+            proc.onMissing(docId);
+        }
+    }
+
+    @Override public void forEachValueInDoc(int docId, ValueInDocProc proc) {
+        for (int[] ordinal : ordinals) {
+            int loc = ordinal[docId];
+            if (loc != 0) {
+                proc.onValue(docId, lat[loc], lon[loc]);
+            }
+        }
+    }
+
+    @Override public void forEachOrdinalInDoc(int docId, OrdinalInDocProc proc) {
+        for (int[] ordinal : ordinals) {
+            proc.onOrdinal(docId, ordinal[docId]);
         }
     }
 
     @Override public GeoPoint value(int docId) {
-        int[] docOrders = order[docId];
-        if (docOrders == null) {
-            return null;
+        for (int[] ordinal : ordinals) {
+            int loc = ordinal[docId];
+            if (loc != 0) {
+                GeoPoint point = valuesCache.get().get();
+                point.latlon(lat[loc], lon[loc]);
+                return point;
+            }
         }
-        GeoPoint point = valuesCache.get().get();
-        int loc = docOrders[0];
-        point.latlon(lat[loc], lon[loc]);
-        return point;
+        return null;
     }
 
     @Override public GeoPoint[] values(int docId) {
-        int[] docOrders = order[docId];
-        if (docOrders == null) {
+        int length = 0;
+        for (int[] ordinal : ordinals) {
+            if (ordinal[docId] != 0) {
+                length++;
+            }
+        }
+        if (length == 0) {
             return EMPTY_ARRAY;
         }
         GeoPoint[] points;
-        if (docOrders.length < VALUE_CACHE_SIZE) {
-            points = valuesArrayCache.get().get()[docOrders.length];
-            for (int i = 0; i < docOrders.length; i++) {
-                int loc = docOrders[i];
-                points[i].latlon(lat[loc], lon[loc]);
+        if (length < VALUE_CACHE_SIZE) {
+            points = valuesArrayCache.get().get()[length];
+            int i = 0;
+            for (int[] ordinal : ordinals) {
+                int loc = ordinal[docId];
+                if (loc != 0) {
+                    points[i++].latlon(lat[loc], lon[loc]);
+                }
             }
         } else {
-            points = new GeoPoint[docOrders.length];
-            for (int i = 0; i < docOrders.length; i++) {
-                int loc = docOrders[i];
-                points[i] = new GeoPoint(lat[loc], lon[loc]);
+            points = new GeoPoint[length];
+            int i = 0;
+            for (int[] ordinal : ordinals) {
+                int loc = ordinal[docId];
+                if (loc != 0) {
+                    points[i++] = new GeoPoint(lat[loc], lon[loc]);
+                }
             }
         }
         return points;
     }
 
     @Override public double latValue(int docId) {
-        int[] docOrders = order[docId];
-        if (docOrders == null) {
-            return 0;
+        for (int[] ordinal : ordinals) {
+            int loc = ordinal[docId];
+            if (loc != 0) {
+                return lat[loc];
+            }
         }
-        return lat[docOrders[0]];
+        return 0;
     }
 
     @Override public double lonValue(int docId) {
-        int[] docOrders = order[docId];
-        if (docOrders == null) {
-            return 0;
+        for (int[] ordinal : ordinals) {
+            int loc = ordinal[docId];
+            if (loc != 0) {
+                return lon[loc];
+            }
         }
-        return lon[docOrders[0]];
+        return 0;
     }
 
     @Override public double[] latValues(int docId) {
-        int[] docOrders = order[docId];
-        if (docOrders == null) {
+        int length = 0;
+        for (int[] ordinal : ordinals) {
+            if (ordinal[docId] != 0) {
+                length++;
+            }
+        }
+        if (length == 0) {
             return DoubleFieldData.EMPTY_DOUBLE_ARRAY;
         }
         double[] doubles;
-        if (docOrders.length < VALUE_CACHE_SIZE) {
-            doubles = valuesLatCache.get().get()[docOrders.length];
+        if (length < VALUE_CACHE_SIZE) {
+            doubles = valuesLatCache.get().get()[length];
         } else {
-            doubles = new double[docOrders.length];
+            doubles = new double[length];
         }
-        for (int i = 0; i < docOrders.length; i++) {
-            doubles[i] = lat[docOrders[i]];
+        int i = 0;
+        for (int[] ordinal : ordinals) {
+            int loc = ordinal[docId];
+            if (loc != 0) {
+                doubles[i++] = lat[loc];
+            }
         }
         return doubles;
     }
 
     @Override public double[] lonValues(int docId) {
-        int[] docOrders = order[docId];
-        if (docOrders == null) {
+        int length = 0;
+        for (int[] ordinal : ordinals) {
+            if (ordinal[docId] != 0) {
+                length++;
+            }
+        }
+        if (length == 0) {
             return DoubleFieldData.EMPTY_DOUBLE_ARRAY;
         }
         double[] doubles;
-        if (docOrders.length < VALUE_CACHE_SIZE) {
-            doubles = valuesLonCache.get().get()[docOrders.length];
+        if (length < VALUE_CACHE_SIZE) {
+            doubles = valuesLonCache.get().get()[length];
         } else {
-            doubles = new double[docOrders.length];
+            doubles = new double[length];
         }
-        for (int i = 0; i < docOrders.length; i++) {
-            doubles[i] = lon[docOrders[i]];
+        int i = 0;
+        for (int[] ordinal : ordinals) {
+            int loc = ordinal[docId];
+            if (loc != 0) {
+                doubles[i++] = lon[loc];
+            }
         }
         return doubles;
     }

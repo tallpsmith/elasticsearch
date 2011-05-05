@@ -75,14 +75,10 @@ public class ShardStateAction extends AbstractComponent {
         logger.warn("sending failed shard for {}, reason [{}]", shardRouting, reason);
         DiscoveryNodes nodes = clusterService.state().nodes();
         if (nodes.localNodeMaster()) {
-            threadPool.execute(new Runnable() {
-                @Override public void run() {
-                    innerShardFailed(shardRouting, reason);
-                }
-            });
+            innerShardFailed(shardRouting, reason);
         } else {
             transportService.sendRequest(clusterService.state().nodes().masterNode(),
-                    ShardFailedTransportHandler.ACTION, new ShardRoutingEntry(shardRouting, reason), new VoidTransportResponseHandler() {
+                    ShardFailedTransportHandler.ACTION, new ShardRoutingEntry(shardRouting, reason), new VoidTransportResponseHandler(ThreadPool.Names.SAME) {
                         @Override public void handleException(TransportException exp) {
                             logger.warn("failed to send failed shard to [{}]", exp, clusterService.state().nodes().masterNode());
                         }
@@ -96,14 +92,10 @@ public class ShardStateAction extends AbstractComponent {
         }
         DiscoveryNodes nodes = clusterService.state().nodes();
         if (nodes.localNodeMaster()) {
-            threadPool.execute(new Runnable() {
-                @Override public void run() {
-                    innerShardStarted(shardRouting, reason);
-                }
-            });
+            innerShardStarted(shardRouting, reason);
         } else {
             transportService.sendRequest(clusterService.state().nodes().masterNode(),
-                    ShardStartedTransportHandler.ACTION, new ShardRoutingEntry(shardRouting, reason), new VoidTransportResponseHandler() {
+                    ShardStartedTransportHandler.ACTION, new ShardRoutingEntry(shardRouting, reason), new VoidTransportResponseHandler(ThreadPool.Names.SAME) {
                         @Override public void handleException(TransportException exp) {
                             logger.warn("failed to send shard started to [{}]", exp, clusterService.state().nodes().masterNode());
                         }
@@ -115,19 +107,15 @@ public class ShardStateAction extends AbstractComponent {
         logger.warn("received shard failed for {}, reason [{}]", shardRouting, reason);
         clusterService.submitStateUpdateTask("shard-failed (" + shardRouting + "), reason [" + reason + "]", new ClusterStateUpdateTask() {
             @Override public ClusterState execute(ClusterState currentState) {
-                RoutingTable routingTable = currentState.routingTable();
-                IndexRoutingTable indexRoutingTable = routingTable.index(shardRouting.index());
-                // if there is no routing table, the index has been deleted while it was being allocated
-                // which is fine, we should just ignore this
-                if (indexRoutingTable == null) {
+                if (logger.isDebugEnabled()) {
+                    logger.debug("Received failed shard {}, reason [{}]", shardRouting, reason);
+                }
+                RoutingAllocation.Result routingResult = shardsAllocation.applyFailedShard(currentState, shardRouting);
+                if (!routingResult.changed()) {
                     return currentState;
                 }
                 if (logger.isDebugEnabled()) {
                     logger.debug("Applying failed shard {}, reason [{}]", shardRouting, reason);
-                }
-                RoutingAllocation.Result routingResult = shardsAllocation.applyFailedShards(currentState, newArrayList(shardRouting));
-                if (!routingResult.changed()) {
-                    return currentState;
                 }
                 return newClusterStateBuilder().state(currentState).routingResult(routingResult).build();
             }
@@ -184,6 +172,10 @@ public class ShardStateAction extends AbstractComponent {
             innerShardFailed(request.shardRouting, request.reason);
             channel.sendResponse(VoidStreamable.INSTANCE);
         }
+
+        @Override public String executor() {
+            return ThreadPool.Names.SAME;
+        }
     }
 
     private class ShardStartedTransportHandler extends BaseTransportRequestHandler<ShardRoutingEntry> {
@@ -197,6 +189,10 @@ public class ShardStateAction extends AbstractComponent {
         @Override public void messageReceived(ShardRoutingEntry request, TransportChannel channel) throws Exception {
             innerShardStarted(request.shardRouting, request.reason);
             channel.sendResponse(VoidStreamable.INSTANCE);
+        }
+
+        @Override public String executor() {
+            return ThreadPool.Names.SAME;
         }
     }
 

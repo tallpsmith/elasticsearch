@@ -19,8 +19,8 @@
 
 package org.elasticsearch.common.lucene;
 
+import org.apache.lucene.index.ExtendedIndexSearcher;
 import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.search.IndexSearcher;
 import org.elasticsearch.ElasticSearchException;
 import org.elasticsearch.common.lease.Releasable;
 
@@ -31,13 +31,13 @@ import org.elasticsearch.common.lease.Releasable;
  */
 public class ReaderSearcherHolder implements Releasable {
 
-    private final IndexSearcher indexSearcher;
+    private final ExtendedIndexSearcher indexSearcher;
 
     public ReaderSearcherHolder(IndexReader indexReader) {
-        this(new IndexSearcher(indexReader));
+        this(new ExtendedIndexSearcher(indexReader));
     }
 
-    public ReaderSearcherHolder(IndexSearcher indexSearcher) {
+    public ReaderSearcherHolder(ExtendedIndexSearcher indexSearcher) {
         this.indexSearcher = indexSearcher;
     }
 
@@ -45,7 +45,7 @@ public class ReaderSearcherHolder implements Releasable {
         return indexSearcher.getIndexReader();
     }
 
-    public IndexSearcher searcher() {
+    public ExtendedIndexSearcher searcher() {
         return indexSearcher;
     }
 

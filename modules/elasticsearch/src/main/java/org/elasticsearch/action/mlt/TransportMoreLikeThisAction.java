@@ -40,6 +40,7 @@ import org.elasticsearch.index.mapper.*;
 import org.elasticsearch.index.query.xcontent.BoolQueryBuilder;
 import org.elasticsearch.index.query.xcontent.MoreLikeThisFieldQueryBuilder;
 import org.elasticsearch.indices.IndicesService;
+import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.BaseTransportRequestHandler;
 import org.elasticsearch.transport.TransportChannel;
 import org.elasticsearch.transport.TransportService;
@@ -68,9 +69,9 @@ public class TransportMoreLikeThisAction extends BaseAction<MoreLikeThisRequest,
 
     private final ClusterService clusterService;
 
-    @Inject public TransportMoreLikeThisAction(Settings settings, TransportSearchAction searchAction, TransportGetAction getAction,
+    @Inject public TransportMoreLikeThisAction(Settings settings, ThreadPool threadPool, TransportSearchAction searchAction, TransportGetAction getAction,
                                                ClusterService clusterService, IndicesService indicesService, TransportService transportService) {
-        super(settings);
+        super(settings, threadPool);
         this.searchAction = searchAction;
         this.getAction = getAction;
         this.indicesService = indicesService;
@@ -96,7 +97,7 @@ public class TransportMoreLikeThisAction extends BaseAction<MoreLikeThisRequest,
                 .fields(getFields.toArray(new String[getFields.size()]))
                 .type(request.type())
                 .id(request.id())
-                .listenerThreaded(false)
+                .listenerThreaded(true)
                 .operationThreaded(true);
 
         request.beforeLocalFork();
@@ -264,8 +265,8 @@ public class TransportMoreLikeThisAction extends BaseAction<MoreLikeThisRequest,
             });
         }
 
-        @Override public boolean spawn() {
-            return false;
+        @Override public String executor() {
+            return ThreadPool.Names.SAME;
         }
     }
 }

@@ -24,7 +24,6 @@ import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.ToXContent;
 
 import java.util.Map;
-import java.util.Set;
 
 /**
  * @author kimchy (shay.banon)
@@ -43,7 +42,12 @@ public interface RestRequest extends ToXContent.Params {
     String uri();
 
     /**
-     * The path part of the URI (without the query string).
+     * The non decoded, raw path provided.
+     */
+    String rawPath();
+
+    /**
+     * The path part of the URI (without the query string), decoded.
      */
     String path();
 
@@ -62,11 +66,7 @@ public interface RestRequest extends ToXContent.Params {
 
     String contentAsString();
 
-    Set<String> headerNames();
-
     String header(String name);
-
-    String cookie();
 
     boolean hasParam(String key);
 
@@ -77,6 +77,8 @@ public interface RestRequest extends ToXContent.Params {
     float paramAsFloat(String key, float defaultValue);
 
     int paramAsInt(String key, int defaultValue);
+
+    long paramAsLong(String key, long defaultValue);
 
     boolean paramAsBoolean(String key, boolean defaultValue);
 

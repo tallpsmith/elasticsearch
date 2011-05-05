@@ -19,11 +19,11 @@
 
 package org.elasticsearch.index.store;
 
+import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Streamable;
 
-import javax.annotation.Nullable;
 import java.io.IOException;
 
 /**
@@ -66,10 +66,10 @@ public class StoreFileMetaData implements Streamable {
     }
 
     public boolean isSame(StoreFileMetaData other) {
-        if (checksum != null && other.checksum != null) {
-            return checksum.equals(other.checksum);
+        if (checksum == null || other.checksum == null) {
+            return false;
         }
-        return length == other.length;
+        return length == other.length && checksum.equals(other.checksum);
     }
 
     public static StoreFileMetaData readStoreFileMetaData(StreamInput in) throws IOException {

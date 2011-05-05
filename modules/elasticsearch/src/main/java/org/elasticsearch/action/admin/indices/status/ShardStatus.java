@@ -24,6 +24,8 @@ import org.elasticsearch.cluster.routing.ShardRouting;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.unit.ByteSizeValue;
+import org.elasticsearch.index.merge.MergeStats;
+import org.elasticsearch.index.refresh.RefreshStats;
 import org.elasticsearch.index.shard.IndexShardState;
 
 import java.io.IOException;
@@ -49,6 +51,10 @@ public class ShardStatus extends BroadcastShardOperationResponse {
     long translogOperations = -1;
 
     DocsStatus docs;
+
+    MergeStats mergeStats;
+
+    RefreshStats refreshStats;
 
     PeerRecoveryStatus peerRecoveryStatus;
 
@@ -146,6 +152,34 @@ public class ShardStatus extends BroadcastShardOperationResponse {
      */
     public DocsStatus getDocs() {
         return docs();
+    }
+
+    /**
+     * Index merge statistics.
+     */
+    public MergeStats mergeStats() {
+        return this.mergeStats;
+    }
+
+    /**
+     * Index merge statistics.
+     */
+    public MergeStats getMergeStats() {
+        return this.mergeStats;
+    }
+
+    /**
+     * Refresh stats.
+     */
+    public RefreshStats refreshStats() {
+        return this.refreshStats;
+    }
+
+    /**
+     * Refresh stats.
+     */
+    public RefreshStats getRefreshStats() {
+        return refreshStats();
     }
 
     /**
@@ -256,6 +290,19 @@ public class ShardStatus extends BroadcastShardOperationResponse {
             out.writeVLong(gatewaySnapshotStatus.indexSize);
             out.writeVInt(gatewaySnapshotStatus.expectedNumberOfOperations());
         }
+
+        if (mergeStats == null) {
+            out.writeBoolean(false);
+        } else {
+            out.writeBoolean(true);
+            mergeStats.writeTo(out);
+        }
+        if (refreshStats == null) {
+            out.writeBoolean(false);
+        } else {
+            out.writeBoolean(true);
+            refreshStats.writeTo(out);
+        }
     }
 
     @Override public void readFrom(StreamInput in) throws IOException {
@@ -286,6 +333,13 @@ public class ShardStatus extends BroadcastShardOperationResponse {
         if (in.readBoolean()) {
             gatewaySnapshotStatus = new GatewaySnapshotStatus(GatewaySnapshotStatus.Stage.fromValue(in.readByte()),
                     in.readVLong(), in.readVLong(), in.readVLong(), in.readVInt());
+        }
+
+        if (in.readBoolean()) {
+            mergeStats = MergeStats.readMergeStats(in);
+        }
+        if (in.readBoolean()) {
+            refreshStats = RefreshStats.readRefreshStats(in);
         }
     }
 }

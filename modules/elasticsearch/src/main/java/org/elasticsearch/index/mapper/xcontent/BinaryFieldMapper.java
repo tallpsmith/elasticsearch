@@ -92,19 +92,20 @@ public class BinaryFieldMapper extends AbstractFieldMapper<byte[]> {
         if (value == null) {
             return null;
         }
-        return new Field(names.indexName(), value, Field.Store.YES);
+        return new Field(names.indexName(), value);
     }
 
     @Override protected String contentType() {
         return CONTENT_TYPE;
     }
 
-    @Override public void toXContent(XContentBuilder builder, Params params) throws IOException {
+    @Override public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject(names.name());
         builder.field("type", contentType());
         if (!names.name().equals(names.indexNameClean())) {
             builder.field("index_name", names.indexNameClean());
         }
         builder.endObject();
+        return builder;
     }
 }

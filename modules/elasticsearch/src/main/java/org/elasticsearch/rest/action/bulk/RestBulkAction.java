@@ -24,6 +24,7 @@ import org.elasticsearch.action.WriteConsistencyLevel;
 import org.elasticsearch.action.bulk.BulkItemResponse;
 import org.elasticsearch.action.bulk.BulkRequest;
 import org.elasticsearch.action.bulk.BulkResponse;
+import org.elasticsearch.action.index.IndexResponse;
 import org.elasticsearch.action.support.replication.ReplicationType;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.client.Requests;
@@ -36,7 +37,7 @@ import org.elasticsearch.rest.*;
 import java.io.IOException;
 
 import static org.elasticsearch.rest.RestRequest.Method.*;
-import static org.elasticsearch.rest.RestResponse.Status.*;
+import static org.elasticsearch.rest.RestStatus.*;
 import static org.elasticsearch.rest.action.support.RestXContentBuilder.*;
 
 /**
@@ -88,7 +89,7 @@ public class RestBulkAction extends BaseRestHandler {
                 try {
                     XContentBuilder builder = restContentBuilder(request);
                     builder.startObject();
-
+                    builder.field(Fields.TOOK, response.tookInMillis());
                     builder.startArray(Fields.ITEMS);
                     for (BulkItemResponse itemResponse : response) {
                         builder.startObject();
@@ -96,10 +97,24 @@ public class RestBulkAction extends BaseRestHandler {
                         builder.field(Fields._INDEX, itemResponse.index());
                         builder.field(Fields._TYPE, itemResponse.type());
                         builder.field(Fields._ID, itemResponse.id());
+                        long version = itemResponse.version();
+                        if (version != -1) {
+                            builder.field(Fields._VERSION, itemResponse.version());
+                        }
                         if (itemResponse.failed()) {
                             builder.field(Fields.ERROR, itemResponse.failure().message());
                         } else {
                             builder.field(Fields.OK, true);
+                        }
+                        if (itemResponse.response() instanceof IndexResponse) {
+                            IndexResponse indexResponse = itemResponse.response();
+                            if (indexResponse.matches() != null) {
+                                builder.startArray(Fields.MATCHES);
+                                for (String match : indexResponse.matches()) {
+                                    builder.value(match);
+                                }
+                                builder.endArray();
+                            }
                         }
                         builder.endObject();
                         builder.endObject();
@@ -130,6 +145,9 @@ public class RestBulkAction extends BaseRestHandler {
         static final XContentBuilderString _ID = new XContentBuilderString("_id");
         static final XContentBuilderString ERROR = new XContentBuilderString("error");
         static final XContentBuilderString OK = new XContentBuilderString("ok");
+        static final XContentBuilderString TOOK = new XContentBuilderString("took");
+        static final XContentBuilderString _VERSION = new XContentBuilderString("_version");
+        static final XContentBuilderString MATCHES = new XContentBuilderString("matches");
     }
 
 }

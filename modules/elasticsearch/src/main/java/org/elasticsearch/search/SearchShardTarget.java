@@ -19,6 +19,7 @@
 
 package org.elasticsearch.search;
 
+import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Streamable;
@@ -31,7 +32,7 @@ import java.io.Serializable;
  *
  * @author kimchy (shay.banon)
  */
-public class SearchShardTarget implements Streamable, Serializable {
+public class SearchShardTarget implements Streamable, Serializable, Comparable<SearchShardTarget> {
 
     private String nodeId;
 
@@ -49,11 +50,11 @@ public class SearchShardTarget implements Streamable, Serializable {
         this.shardId = shardId;
     }
 
-    public String nodeId() {
+    @Nullable public String nodeId() {
         return nodeId;
     }
 
-    public String getNodeId() {
+    @Nullable public String getNodeId() {
         return nodeId;
     }
 
@@ -79,14 +80,29 @@ public class SearchShardTarget implements Streamable, Serializable {
         return result;
     }
 
+    @Override public int compareTo(SearchShardTarget o) {
+        int i = index.compareTo(o.index());
+        if (i == 0) {
+            i = shardId - o.shardId;
+        }
+        return i;
+    }
+
     @Override public void readFrom(StreamInput in) throws IOException {
-        nodeId = in.readUTF();
+        if (in.readBoolean()) {
+            nodeId = in.readUTF();
+        }
         index = in.readUTF();
         shardId = in.readVInt();
     }
 
     @Override public void writeTo(StreamOutput out) throws IOException {
-        out.writeUTF(nodeId);
+        if (nodeId == null) {
+            out.writeBoolean(false);
+        } else {
+            out.writeBoolean(true);
+            out.writeUTF(nodeId);
+        }
         out.writeUTF(index);
         out.writeVInt(shardId);
     }
@@ -112,6 +128,9 @@ public class SearchShardTarget implements Streamable, Serializable {
     }
 
     @Override public String toString() {
+        if (nodeId == null) {
+            return "[_na_][" + index + "][" + shardId + "]";
+        }
         return "[" + nodeId + "][" + index + "][" + shardId + "]";
     }
 }

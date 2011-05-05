@@ -20,20 +20,17 @@
 package org.elasticsearch.index.cache.id;
 
 import org.apache.lucene.index.IndexReader;
+import org.elasticsearch.common.component.CloseableComponent;
+import org.elasticsearch.index.IndexComponent;
 
 /**
  * @author kimchy (shay.banon)
  */
-public interface IdCache extends Iterable<IdReaderCache> {
+public interface IdCache extends IndexComponent, CloseableComponent, Iterable<IdReaderCache> {
 
     void clear();
 
     void clear(IndexReader reader);
-
-    /**
-     * Clears unreferenced readers.
-     */
-    void clearUnreferenced();
 
     void refresh(IndexReader[] readers) throws Exception;
 

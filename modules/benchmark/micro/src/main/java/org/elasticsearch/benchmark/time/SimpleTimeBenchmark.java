@@ -21,7 +21,6 @@ package org.elasticsearch.benchmark.time;
 
 import org.elasticsearch.common.StopWatch;
 
-import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 
 /**
@@ -29,6 +28,7 @@ import java.util.concurrent.CountDownLatch;
  */
 public class SimpleTimeBenchmark {
 
+    private static boolean USE_NANO_TIME = false;
     private static long NUMBER_OF_ITERATIONS = 1000000;
     private static int NUMBER_OF_THREADS = 100;
 
@@ -38,7 +38,7 @@ public class SimpleTimeBenchmark {
         for (long i = 0; i < NUMBER_OF_ITERATIONS; i++) {
             System.currentTimeMillis();
         }
-        System.out.println("Took " + stopWatch.stop().totalTime() + " TP Millis " + (stopWatch.totalTime().millisFrac() / NUMBER_OF_ITERATIONS));
+        System.out.println("Took " + stopWatch.stop().totalTime() + " TP Millis " + (NUMBER_OF_ITERATIONS / stopWatch.totalTime().millisFrac()));
 
         System.out.println("Running using " + NUMBER_OF_THREADS + " threads with " + NUMBER_OF_ITERATIONS + " iterations");
         final CountDownLatch latch = new CountDownLatch(NUMBER_OF_THREADS);
@@ -46,8 +46,14 @@ public class SimpleTimeBenchmark {
         for (int i = 0; i < threads.length; i++) {
             threads[i] = new Thread(new Runnable() {
                 @Override public void run() {
-                    for (long i = 0; i < NUMBER_OF_ITERATIONS; i++) {
-                        System.currentTimeMillis();
+                    if (USE_NANO_TIME) {
+                        for (long i = 0; i < NUMBER_OF_ITERATIONS; i++) {
+                            System.nanoTime();
+                        }
+                    } else {
+                        for (long i = 0; i < NUMBER_OF_ITERATIONS; i++) {
+                            System.currentTimeMillis();
+                        }
                     }
                     latch.countDown();
                 }
@@ -59,6 +65,6 @@ public class SimpleTimeBenchmark {
         }
         latch.await();
         stopWatch.stop();
-        System.out.println("Took " + stopWatch.totalTime() + " TP Millis " + (stopWatch.totalTime().millisFrac() / (NUMBER_OF_ITERATIONS * NUMBER_OF_THREADS)));
+        System.out.println("Took " + stopWatch.totalTime() + " TP Millis " + ((NUMBER_OF_ITERATIONS * NUMBER_OF_THREADS) / stopWatch.totalTime().millisFrac()));
     }
 }

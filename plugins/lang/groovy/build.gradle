@@ -11,8 +11,8 @@ configurations.compile.transitive = true
 configurations.testCompile.transitive = true
 
 // no need to use the resource dir
-sourceSets.main.resources.srcDirs 'src/main/groovy'
-sourceSets.test.resources.srcDirs 'src/test/groovy'
+sourceSets.main.resources.srcDirs 'src/main/groovy', 'src/main/java'
+sourceSets.test.resources.srcDirs 'src/test/groovy', 'src/test/java'
 
 // add the source files to the dist jar
 //jar {
@@ -30,21 +30,9 @@ configurations {
 dependencies {
     compile project(':elasticsearch')
 
-    groovy group: 'org.codehaus.groovy', name: 'groovy-all', version: '1.7.5'
-    distLib('org.codehaus.groovy:groovy-all:1.7.5') { transitive = false }
-
-    testCompile project(':test-testng')
-    testCompile('org.testng:testng:5.10:jdk15') { transitive = false }
-    testCompile 'org.hamcrest:hamcrest-all:1.1'
+    groovy group: 'org.codehaus.groovy', name: 'groovy-all', version: '1.8.0'
+    distLib('org.codehaus.groovy:groovy-all:1.8.0') { transitive = false }
     testCompile('junit:junit:4.8.1') {transitive = false}
-}
-
-test {
-    useTestNG()
-    jmvArgs = ["-ea", "-Xmx1024m"]
-    suiteName = project.name
-    listeners = ["org.elasticsearch.util.testng.Listeners"]
-    systemProperties["es.test.log.conf"] = System.getProperty("es.test.log.conf", "log4j-gradle.properties")
 }
 
 task explodedDist(dependsOn: [jar], description: 'Builds the plugin zip file') << {

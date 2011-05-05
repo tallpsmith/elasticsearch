@@ -21,7 +21,8 @@ package org.elasticsearch.index.field.data.floats;
 
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.search.FieldCache;
-import org.elasticsearch.common.trove.TFloatArrayList;
+import org.elasticsearch.common.RamUsage;
+import org.elasticsearch.common.trove.list.array.TFloatArrayList;
 import org.elasticsearch.index.field.data.FieldDataType;
 import org.elasticsearch.index.field.data.NumericFieldData;
 import org.elasticsearch.index.field.data.support.FieldDataLoader;
@@ -40,6 +41,14 @@ public abstract class FloatFieldData extends NumericFieldData<FloatDocFieldData>
     protected FloatFieldData(String fieldName, float[] values) {
         super(fieldName);
         this.values = values;
+    }
+
+    @Override protected long computeSizeInBytes() {
+        return RamUsage.NUM_BYTES_FLOAT * values.length + RamUsage.NUM_BYTES_ARRAY_HEADER;
+    }
+
+    public final float[] values() {
+        return this.values;
     }
 
     abstract public float value(int docId);
@@ -102,6 +111,13 @@ public abstract class FloatFieldData extends NumericFieldData<FloatDocFieldData>
         void onValue(float value);
     }
 
+    public abstract void forEachValueInDoc(int docId, ValueInDocProc proc);
+
+    public static interface ValueInDocProc {
+        void onValue(int docId, float value);
+
+        void onMissing(int docId);
+    }
 
     public static FloatFieldData load(IndexReader reader, String field) throws IOException {
         return FieldDataLoader.load(reader, field, new FloatTypeLoader());
@@ -122,11 +138,11 @@ public abstract class FloatFieldData extends NumericFieldData<FloatDocFieldData>
         }
 
         @Override public FloatFieldData buildSingleValue(String field, int[] ordinals) {
-            return new SingleValueFloatFieldData(field, ordinals, terms.toNativeArray());
+            return new SingleValueFloatFieldData(field, ordinals, terms.toArray());
         }
 
         @Override public FloatFieldData buildMultiValue(String field, int[][] ordinals) {
-            return new MultiValueFloatFieldData(field, ordinals, terms.toNativeArray());
+            return new MultiValueFloatFieldData(field, ordinals, terms.toArray());
         }
     }
 }

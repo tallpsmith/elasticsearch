@@ -49,6 +49,7 @@ import org.elasticsearch.index.translog.TranslogStreams;
 import org.elasticsearch.threadpool.ThreadPool;
 
 import java.io.IOException;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -107,6 +108,10 @@ public abstract class BlobStoreIndexShardGateway extends AbstractIndexShardCompo
 
     @Override public String toString() {
         return type() + "://" + blobStore + "/" + shardPath;
+    }
+
+    @Override public boolean requiresSnapshot() {
+        return true;
     }
 
     @Override public boolean requiresSnapshotScheduling() {
@@ -421,7 +426,7 @@ public abstract class BlobStoreIndexShardGateway extends AbstractIndexShardCompo
     private void recoverTranslog(CommitPoint commitPoint, ImmutableMap<String, BlobMetaData> blobs) throws IndexShardGatewayRecoveryException {
         if (commitPoint.translogFiles().isEmpty()) {
             // no translog files, bail
-            indexShard.start();
+            indexShard.start("post recovery from gateway, no translog");
             return;
         }
 
@@ -653,7 +658,7 @@ public abstract class BlobStoreIndexShardGateway extends AbstractIndexShardCompo
                         if (fileInfo.checksum() != null) {
                             store.writeChecksum(fileInfo.physicalName(), fileInfo.checksum());
                         }
-                        store.directory().sync(fileInfo.physicalName());
+                        store.directory().sync(Collections.singleton(fileInfo.physicalName()));
                     } catch (IOException e) {
                         onFailure(e);
                         return;

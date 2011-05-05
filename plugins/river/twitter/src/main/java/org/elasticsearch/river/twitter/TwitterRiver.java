@@ -28,6 +28,7 @@ import org.elasticsearch.client.action.bulk.BulkRequestBuilder;
 import org.elasticsearch.cluster.block.ClusterBlockException;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.inject.Inject;
+import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.support.XContentMapValues;
@@ -36,9 +37,10 @@ import org.elasticsearch.river.AbstractRiverComponent;
 import org.elasticsearch.river.River;
 import org.elasticsearch.river.RiverName;
 import org.elasticsearch.river.RiverSettings;
+import org.elasticsearch.threadpool.ThreadPool;
 import twitter4j.*;
+import twitter4j.conf.ConfigurationBuilder;
 
-import java.net.URL;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -48,7 +50,17 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class TwitterRiver extends AbstractRiverComponent implements River {
 
+    private final ThreadPool threadPool;
+
     private final Client client;
+
+    private String user;
+    private String password;
+
+    private String oauthConsumerKey = null;
+    private String oauthConsumerSecret = null;
+    private String oauthAccessToken = null;
+    private String oauthAccessTokenSecret = null;
 
     private final String indexName;
 
@@ -63,23 +75,51 @@ public class TwitterRiver extends AbstractRiverComponent implements River {
     private String streamType;
 
 
-    private final TwitterStream stream;
+    private volatile TwitterStream stream;
 
     private final AtomicInteger onGoingBulks = new AtomicInteger();
 
     private volatile BulkRequestBuilder currentRequest;
 
+    private volatile boolean closed = false;
+
     @SuppressWarnings({"unchecked"})
-    @Inject public TwitterRiver(RiverName riverName, RiverSettings settings, Client client) {
+    @Inject public TwitterRiver(RiverName riverName, RiverSettings settings, Client client, ThreadPool threadPool) {
         super(riverName, settings);
         this.client = client;
+        this.threadPool = threadPool;
 
-        String user = null;
-        String password = null;
         if (settings.settings().containsKey("twitter")) {
             Map<String, Object> twitterSettings = (Map<String, Object>) settings.settings().get("twitter");
             user = XContentMapValues.nodeStringValue(twitterSettings.get("user"), null);
             password = XContentMapValues.nodeStringValue(twitterSettings.get("password"), null);
+            if (twitterSettings.containsKey("oauth")) {
+                Map<String, Object> oauth = (Map<String, Object>) twitterSettings.get("oauth");
+                if (oauth.containsKey("consumerKey")) {
+                    oauthConsumerKey = XContentMapValues.nodeStringValue(oauth.get("consumerKey"), null);
+                }
+                if (oauth.containsKey("consumer_key")) {
+                    oauthConsumerKey = XContentMapValues.nodeStringValue(oauth.get("consumer_key"), null);
+                }
+                if (oauth.containsKey("consumerSecret")) {
+                    oauthConsumerSecret = XContentMapValues.nodeStringValue(oauth.get("consumerSecret"), null);
+                }
+                if (oauth.containsKey("consumer_secret")) {
+                    oauthConsumerSecret = XContentMapValues.nodeStringValue(oauth.get("consumer_secret"), null);
+                }
+                if (oauth.containsKey("accessToken")) {
+                    oauthAccessToken = XContentMapValues.nodeStringValue(oauth.get("accessToken"), null);
+                }
+                if (oauth.containsKey("access_token")) {
+                    oauthAccessToken = XContentMapValues.nodeStringValue(oauth.get("access_token"), null);
+                }
+                if (oauth.containsKey("accessTokenSecret")) {
+                    oauthAccessTokenSecret = XContentMapValues.nodeStringValue(oauth.get("accessTokenSecret"), null);
+                }
+                if (oauth.containsKey("access_token_secret")) {
+                    oauthAccessTokenSecret = XContentMapValues.nodeStringValue(oauth.get("access_token_secret"), null);
+                }
+            }
             streamType = XContentMapValues.nodeStringValue(twitterSettings.get("type"), "sample");
             Map<String, Object> filterSettings = (Map<String, Object>) twitterSettings.get("filter");
             if (filterSettings != null) {
@@ -114,6 +154,7 @@ public class TwitterRiver extends AbstractRiverComponent implements River {
                         for (int i = 0; i < ids.length; i++) {
                             followIds[i] = Integer.parseInt(ids[i]);
                         }
+                        filterQuery.follow(followIds);
                     }
                 }
                 Object locations = filterSettings.get("locations");
@@ -162,13 +203,13 @@ public class TwitterRiver extends AbstractRiverComponent implements River {
 
         logger.info("creating twitter stream river for [{}]", user);
 
-        if (user == null || password == null) {
+        if (user == null && password == null && oauthAccessToken == null && oauthConsumerKey == null && oauthConsumerSecret == null && oauthAccessTokenSecret == null) {
             stream = null;
             indexName = null;
             typeName = "status";
             bulkSize = 100;
             dropThreshold = 10;
-            logger.warn("no user / password specified, disabling river...");
+            logger.warn("no user/password or oauth specified, disabling river...");
             return;
         }
 
@@ -185,7 +226,17 @@ public class TwitterRiver extends AbstractRiverComponent implements River {
             dropThreshold = 10;
         }
 
-        stream = new TwitterStreamFactory(new StatusHandler()).getInstance(user, password);
+        ConfigurationBuilder cb = new ConfigurationBuilder();
+        if (oauthAccessToken != null && oauthConsumerKey != null && oauthConsumerSecret != null && oauthAccessTokenSecret != null) {
+            cb.setOAuthConsumerKey(oauthConsumerKey)
+                    .setOAuthConsumerSecret(oauthConsumerSecret)
+                    .setOAuthAccessToken(oauthAccessToken)
+                    .setOAuthAccessTokenSecret(oauthAccessTokenSecret);
+        } else {
+            cb.setUser(user).setPassword(password);
+        }
+        stream = new TwitterStreamFactory(cb.build()).getInstance();
+        stream.addListener(new StatusHandler());
     }
 
     @Override public void start() {
@@ -194,9 +245,12 @@ public class TwitterRiver extends AbstractRiverComponent implements River {
         }
         logger.info("starting twitter stream");
         try {
-            String mapping = XContentFactory.jsonBuilder().startObject().startObject(typeName)
-                    .startObject("properties").startObject("location").field("type", "geo_point").endObject().endObject()
-                    .endObject().endObject().string();
+            String mapping = XContentFactory.jsonBuilder().startObject().startObject(typeName).startObject("properties")
+                    .startObject("location").field("type", "geo_point").endObject()
+                    .startObject("user").startObject("properties").startObject("screen_name").field("type", "string").field("index", "not_analyzed").endObject().endObject().endObject()
+                    .startObject("mention").startObject("properties").startObject("screen_name").field("type", "string").field("index", "not_analyzed").endObject().endObject().endObject()
+                    .startObject("in_reply").startObject("properties").startObject("user_screen_name").field("type", "string").field("index", "not_analyzed").endObject().endObject().endObject()
+                    .endObject().endObject().endObject().string();
             client.admin().indices().prepareCreate(indexName).addMapping(typeName, mapping).execute().actionGet();
         } catch (Exception e) {
             if (ExceptionsHelper.unwrapCause(e) instanceof IndexAlreadyExistsException) {
@@ -223,7 +277,65 @@ public class TwitterRiver extends AbstractRiverComponent implements River {
         }
     }
 
+    private void reconnect() {
+        if (closed) {
+            return;
+        }
+        try {
+            stream.cleanUp();
+        } catch (Exception e) {
+            logger.debug("failed to cleanup after failure", e);
+        }
+        try {
+            stream.shutdown();
+        } catch (Exception e) {
+            logger.debug("failed to shutdown after failure", e);
+        }
+        if (closed) {
+            return;
+        }
+
+        try {
+            ConfigurationBuilder cb = new ConfigurationBuilder();
+            if (oauthAccessToken != null && oauthConsumerKey != null && oauthConsumerSecret != null && oauthAccessTokenSecret != null) {
+                cb.setOAuthConsumerKey(oauthConsumerKey)
+                        .setOAuthConsumerSecret(oauthConsumerSecret)
+                        .setOAuthAccessToken(oauthAccessToken)
+                        .setOAuthAccessTokenSecret(oauthAccessTokenSecret);
+            } else {
+                cb.setUser(user).setPassword(password);
+            }
+            stream = new TwitterStreamFactory(cb.build()).getInstance();
+            stream.addListener(new StatusHandler());
+
+            if (streamType.equals("filter") || filterQuery != null) {
+                try {
+                    stream.filter(filterQuery);
+                } catch (TwitterException e) {
+                    logger.warn("failed to create filter stream based on query, disabling river....");
+                }
+            } else if (streamType.equals("firehose")) {
+                stream.firehose(0);
+            } else {
+                stream.sample();
+            }
+        } catch (Exception e) {
+            if (closed) {
+                close();
+                return;
+            }
+            // TODO, we can update the status of the river to RECONNECT
+            logger.warn("failed to connect after failure, throttling", e);
+            threadPool.schedule(TimeValue.timeValueSeconds(10), ThreadPool.Names.CACHED, new Runnable() {
+                @Override public void run() {
+                    reconnect();
+                }
+            });
+        }
+    }
+
     @Override public void close() {
+        this.closed = true;
         logger.info("closing twitter stream river");
         if (stream != null) {
             stream.cleanUp();
@@ -244,14 +356,15 @@ public class TwitterRiver extends AbstractRiverComponent implements River {
                 builder.field("source", status.getSource());
                 builder.field("truncated", status.isTruncated());
 
-
-                if (status.getUserMentions() != null) {
+                if (status.getUserMentionEntities() != null) {
                     builder.startArray("mention");
-                    for (User user : status.getUserMentions()) {
+                    for (UserMentionEntity user : status.getUserMentionEntities()) {
                         builder.startObject();
                         builder.field("id", user.getId());
                         builder.field("name", user.getName());
                         builder.field("screen_name", user.getScreenName());
+                        builder.field("start", user.getStart());
+                        builder.field("end", user.getEnd());
                         builder.endObject();
                     }
                     builder.endArray();
@@ -271,8 +384,16 @@ public class TwitterRiver extends AbstractRiverComponent implements River {
                     builder.endObject();
                 }
 
-                if (status.getHashtags() != null) {
-                    builder.array("hashtag", status.getHashtags());
+                if (status.getHashtagEntities() != null) {
+                    builder.startArray("hashtag");
+                    for (HashtagEntity hashtag : status.getHashtagEntities()) {
+                        builder.startObject();
+                        builder.field("text", hashtag.getText());
+                        builder.field("start", hashtag.getStart());
+                        builder.field("end", hashtag.getEnd());
+                        builder.endObject();
+                    }
+                    builder.endArray();
                 }
                 if (status.getContributors() != null) {
                     builder.array("contributor", status.getContributors());
@@ -295,11 +416,21 @@ public class TwitterRiver extends AbstractRiverComponent implements River {
                     builder.field("url", status.getPlace().getURL());
                     builder.endObject();
                 }
-                if (status.getURLs() != null) {
+                if (status.getURLEntities() != null) {
                     builder.startArray("link");
-                    for (URL url : status.getURLs()) {
+                    for (URLEntity url : status.getURLEntities()) {
                         if (url != null) {
-                            builder.value(url.toExternalForm());
+                            builder.startObject();
+                            builder.field("url", url.getURL().toExternalForm());
+                            if (url.getDisplayURL() != null) {
+                                builder.field("display_url", url.getDisplayURL());
+                            }
+                            if (url.getExpandedURL() != null) {
+                                builder.field("expand_url", url.getExpandedURL());
+                            }
+                            builder.field("start", url.getStart());
+                            builder.field("end", url.getEnd());
+                            builder.endObject();
                         }
                     }
                     builder.endArray();
@@ -340,10 +471,16 @@ public class TwitterRiver extends AbstractRiverComponent implements River {
         }
 
         @Override public void onTrackLimitationNotice(int numberOfLimitedStatuses) {
+            logger.info("received track limitation notice, number_of_limited_statuses {}", numberOfLimitedStatuses);
         }
 
         @Override public void onException(Exception ex) {
-            logger.warn("stream failure", ex);
+            logger.warn("stream failure, restarting stream...", ex);
+            threadPool.cached().execute(new Runnable() {
+                @Override public void run() {
+                    reconnect();
+                }
+            });
         }
 
         private void processBulkIfNeeded() {

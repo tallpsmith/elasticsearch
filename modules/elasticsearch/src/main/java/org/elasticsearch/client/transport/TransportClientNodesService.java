@@ -33,10 +33,7 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.transport.TransportAddress;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.threadpool.ThreadPool;
-import org.elasticsearch.transport.BaseTransportResponseHandler;
-import org.elasticsearch.transport.ConnectTransportException;
-import org.elasticsearch.transport.TransportException;
-import org.elasticsearch.transport.TransportService;
+import org.elasticsearch.transport.*;
 
 import java.util.HashSet;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -70,9 +67,11 @@ public class TransportClientNodesService extends AbstractComponent {
 
     private final Runnable nodesSampler;
 
-    private final ScheduledFuture nodesSamplerFuture;
+    private volatile ScheduledFuture nodesSamplerFuture;
 
     private final AtomicInteger randomNodeGenerator = new AtomicInteger();
+
+    private volatile boolean closed;
 
     @Inject public TransportClientNodesService(Settings settings, ClusterName clusterName,
                                                TransportService transportService, ThreadPool threadPool) {
@@ -92,7 +91,7 @@ public class TransportClientNodesService extends AbstractComponent {
         } else {
             this.nodesSampler = new ScheduledConnectNodeSampler();
         }
-        this.nodesSamplerFuture = threadPool.scheduleWithFixedDelay(nodesSampler, nodesSamplerInterval);
+        this.nodesSamplerFuture = threadPool.schedule(nodesSamplerInterval, ThreadPool.Names.CACHED, nodesSampler);
 
         // we want the transport service to throw connect exceptions, so we can retry
         transportService.throwConnectException(true);
@@ -151,6 +150,7 @@ public class TransportClientNodesService extends AbstractComponent {
     }
 
     public void close() {
+        closed = true;
         nodesSamplerFuture.cancel(true);
         for (DiscoveryNode listedNode : listedNodes)
             transportService.disconnectFromNode(listedNode);
@@ -158,31 +158,53 @@ public class TransportClientNodesService extends AbstractComponent {
 
     private class ScheduledConnectNodeSampler implements Runnable {
         @Override public synchronized void run() {
+            if (closed) {
+                return;
+            }
             HashSet<DiscoveryNode> newNodes = new HashSet<DiscoveryNode>();
             for (DiscoveryNode node : listedNodes) {
                 if (!transportService.nodeConnected(node)) {
                     try {
                         transportService.connectToNode(node);
-                        newNodes.add(node);
                     } catch (Exception e) {
                         logger.debug("Failed to connect to node " + node + ", removed from nodes list", e);
+                        continue;
                     }
-                } else {
-                    newNodes.add(node);
+                }
+                try {
+                    NodesInfoResponse nodeInfo = transportService.submitRequest(node, TransportActions.Admin.Cluster.Node.INFO, Requests.nodesInfoRequest("_local"), new FutureTransportResponseHandler<NodesInfoResponse>() {
+                        @Override public NodesInfoResponse newInstance() {
+                            return new NodesInfoResponse();
+                        }
+                    }).txGet();
+                    if (!clusterName.equals(nodeInfo.clusterName())) {
+                        logger.warn("Node {} not part of the cluster {}, ignoring...", node, clusterName);
+                    } else {
+                        newNodes.add(node);
+                    }
+                } catch (Exception e) {
+                    logger.warn("failed to get node info for {}", e, node);
                 }
             }
             nodes = new ImmutableList.Builder<DiscoveryNode>().addAll(newNodes).build();
+
+            if (!closed) {
+                nodesSamplerFuture = threadPool.schedule(nodesSamplerInterval, ThreadPool.Names.CACHED, this);
+            }
         }
     }
 
     private class ScheduledSniffNodesSampler implements Runnable {
 
         @Override public synchronized void run() {
+            if (closed) {
+                return;
+            }
             ImmutableList<DiscoveryNode> listedNodes = TransportClientNodesService.this.listedNodes;
             final CountDownLatch latch = new CountDownLatch(listedNodes.size());
             final CopyOnWriteArrayList<NodesInfoResponse> nodesInfoResponses = new CopyOnWriteArrayList<NodesInfoResponse>();
             for (final DiscoveryNode listedNode : listedNodes) {
-                threadPool.execute(new Runnable() {
+                threadPool.cached().execute(new Runnable() {
                     @Override public void run() {
                         try {
                             transportService.connectToNode(listedNode); // make sure we are connected to it
@@ -190,6 +212,10 @@ public class TransportClientNodesService extends AbstractComponent {
 
                                 @Override public NodesInfoResponse newInstance() {
                                     return new NodesInfoResponse();
+                                }
+
+                                @Override public String executor() {
+                                    return ThreadPool.Names.SAME;
                                 }
 
                                 @Override public void handleResponse(NodesInfoResponse response) {
@@ -238,6 +264,10 @@ public class TransportClientNodesService extends AbstractComponent {
                 }
             }
             nodes = new ImmutableList.Builder<DiscoveryNode>().addAll(newNodes).build();
+
+            if (!closed) {
+                nodesSamplerFuture = threadPool.schedule(nodesSamplerInterval, ThreadPool.Names.CACHED, this);
+            }
         }
     }
 

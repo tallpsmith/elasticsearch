@@ -25,7 +25,6 @@ import org.elasticsearch.action.TransportActions;
 import org.elasticsearch.action.support.DefaultShardOperationFailedException;
 import org.elasticsearch.action.support.broadcast.BroadcastShardOperationFailedException;
 import org.elasticsearch.action.support.broadcast.TransportBroadcastOperationAction;
-import org.elasticsearch.cache.query.parser.QueryParserCache;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.routing.GroupShardsIterator;
@@ -51,13 +50,14 @@ public class TransportClearIndicesCacheAction extends TransportBroadcastOperatio
 
     private final IndicesService indicesService;
 
-    private final QueryParserCache queryParserCache;
-
     @Inject public TransportClearIndicesCacheAction(Settings settings, ThreadPool threadPool, ClusterService clusterService,
-                                                    TransportService transportService, IndicesService indicesService, QueryParserCache queryParserCache) {
+                                                    TransportService transportService, IndicesService indicesService) {
         super(settings, threadPool, clusterService, transportService);
-        this.queryParserCache = queryParserCache;
         this.indicesService = indicesService;
+    }
+
+    @Override protected String executor() {
+        return ThreadPool.Names.CACHED;
     }
 
     @Override protected String transportAction() {
@@ -111,12 +111,31 @@ public class TransportClearIndicesCacheAction extends TransportBroadcastOperatio
     }
 
     @Override protected ShardClearIndicesCacheResponse shardOperation(ShardClearIndicesCacheRequest request) throws ElasticSearchException {
-        // TODO we can optimize to go to a single node where the index exists
         IndexService service = indicesService.indexService(request.index());
         if (service != null) {
-            service.cache().clear();
+            // we always clear the query cache
+            service.cache().queryParserCache().clear();
+            boolean clearedAtLeastOne = false;
+            if (request.filterCache()) {
+                clearedAtLeastOne = true;
+                service.cache().filter().clear();
+            }
+            if (request.fieldDataCache()) {
+                clearedAtLeastOne = true;
+                service.cache().fieldData().clear();
+            }
+            if (request.idCache()) {
+                clearedAtLeastOne = true;
+                service.cache().idCache().clear();
+            }
+            if (request.bloomCache()) {
+                clearedAtLeastOne = true;
+                service.cache().bloomCache().clear();
+            }
+            if (!clearedAtLeastOne) {
+                service.cache().clear();
+            }
         }
-        queryParserCache.clear();
         return new ShardClearIndicesCacheResponse(request.index(), request.shardId());
     }
 

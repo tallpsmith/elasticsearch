@@ -2,6 +2,7 @@
   <dictionary name="kimchy">
     <words>
       <w>addr</w>
+      <w>aggregators</w>
       <w>amazonaws</w>
       <w>apis</w>
       <w>appendable</w>
@@ -23,7 +24,9 @@
       <w>camelcase</w>
       <w>canonicalhost</w>
       <w>charfilter</w>
+      <w>charsets</w>
       <w>checksum</w>
+      <w>checksums</w>
       <w>chunking</w>
       <w>closeable</w>
       <w>cloudfiles</w>
@@ -49,6 +52,7 @@
       <w>failover</w>
       <w>firehose</w>
       <w>flushable</w>
+      <w>forkjoin</w>
       <w>formatter</w>
       <w>formatters</w>
       <w>frac</w>
@@ -57,6 +61,7 @@
       <w>geohash</w>
       <w>guice</w>
       <w>hadoop</w>
+      <w>hashtag</w>
       <w>hdfs</w>
       <w>histo</w>
       <w>hpux</w>
@@ -82,6 +87,8 @@
       <w>linefeeds</w>
       <w>lons</w>
       <w>loopback</w>
+      <w>lstag</w>
+      <w>ltag</w>
       <w>lucene</w>
       <w>mcast</w>
       <w>memcached</w>
@@ -102,6 +109,7 @@
       <w>nospawn</w>
       <w>param</w>
       <w>params</w>
+      <w>persistency</w>
       <w>pinger</w>
       <w>pluggable</w>
       <w>plugins</w>
@@ -114,10 +122,12 @@
       <w>rackspace</w>
       <w>rebalance</w>
       <w>rebalancing</w>
+      <w>recycler</w>
       <w>regex</w>
       <w>reparse</w>
       <w>reparsed</w>
       <w>retrans</w>
+      <w>retryable</w>
       <w>retval</w>
       <w>routings</w>
       <w>rsts</w>
@@ -125,6 +135,7 @@
       <w>scriptable</w>
       <w>searchable</w>
       <w>segs</w>
+      <w>sentinal</w>
       <w>serializers</w>
       <w>sigar</w>
       <w>slurper</w>
@@ -156,6 +167,7 @@
       <w>userid</w>
       <w>uuid</w>
       <w>versioned</w>
+      <w>versioning</w>
       <w>warmup</w>
       <w>wikipedia</w>
       <w>wildcards</w>

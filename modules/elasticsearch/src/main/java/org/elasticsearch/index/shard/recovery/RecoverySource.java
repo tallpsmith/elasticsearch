@@ -74,7 +74,8 @@ public class RecoverySource extends AbstractComponent {
 
     private final boolean compress;
 
-    private final int translogBatchSize;
+    private final int translogOps;
+    private final ByteSizeValue translogSize;
 
     private final ExecutorService concurrentStreamPool;
 
@@ -88,10 +89,12 @@ public class RecoverySource extends AbstractComponent {
         this.concurrentStreamPool = DynamicExecutors.newScalingThreadPool(1, concurrentStreams, TimeValue.timeValueSeconds(5).millis(), EsExecutors.daemonThreadFactory(settings, "[recovery_stream]"));
 
         this.fileChunkSize = componentSettings.getAsBytesSize("file_chunk_size", new ByteSizeValue(100, ByteSizeUnit.KB));
-        this.translogBatchSize = componentSettings.getAsInt("translog_batch_size", 100);
+        this.translogOps = componentSettings.getAsInt("translog_ops", 1000);
+        this.translogSize = componentSettings.getAsBytesSize("translog_size", new ByteSizeValue(100, ByteSizeUnit.KB));
         this.compress = componentSettings.getAsBoolean("compress", true);
 
-        logger.debug("using concurrent_streams [{}], file_chunk_size [{}], translog_batch_size [{}], and compress [{}]", concurrentStreams, fileChunkSize, translogBatchSize, compress);
+        logger.debug("using concurrent_streams [{}], file_chunk_size [{}], translog_size [{}], translog_ops [{}], and compress [{}]",
+                concurrentStreams, fileChunkSize, translogSize, translogOps, compress);
 
         transportService.registerHandler(Actions.START_RECOVERY, new StartRecoveryTransportRequestHandler());
     }
@@ -134,8 +137,8 @@ public class RecoverySource extends AbstractComponent {
                             }
                             response.phase1FileNames.add(name);
                             response.phase1FileSizes.add(md.length());
-                            totalSize += md.length();
                         }
+                        totalSize += md.length();
                     }
                     response.phase1TotalSize = totalSize;
                     response.phase1ExistingTotalSize = existingTotalSize;
@@ -144,7 +147,7 @@ public class RecoverySource extends AbstractComponent {
 
                     RecoveryFilesInfoRequest recoveryInfoFilesRequest = new RecoveryFilesInfoRequest(request.shardId(), response.phase1FileNames, response.phase1FileSizes,
                             response.phase1ExistingFileNames, response.phase1ExistingFileSizes, response.phase1TotalSize, response.phase1ExistingTotalSize);
-                    transportService.submitRequest(request.targetNode(), RecoveryTarget.Actions.FILES_INFO, recoveryInfoFilesRequest, VoidTransportResponseHandler.INSTANCE).txGet();
+                    transportService.submitRequest(request.targetNode(), RecoveryTarget.Actions.FILES_INFO, recoveryInfoFilesRequest, VoidTransportResponseHandler.INSTANCE_SAME).txGet();
 
                     final CountDownLatch latch = new CountDownLatch(response.phase1FileNames.size());
                     final AtomicReference<Exception> lastException = new AtomicReference<Exception>();
@@ -167,7 +170,7 @@ public class RecoverySource extends AbstractComponent {
                                         long position = indexInput.getFilePointer();
                                         indexInput.readBytes(buf, 0, toRead, false);
                                         transportService.submitRequest(request.targetNode(), RecoveryTarget.Actions.FILE_CHUNK, new RecoveryFileChunkRequest(request.shardId(), name, position, len, md.checksum(), buf, toRead),
-                                                TransportRequestOptions.options().withCompress(compress).withLowType(), VoidTransportResponseHandler.INSTANCE).txGet();
+                                                TransportRequestOptions.options().withCompress(compress).withLowType(), VoidTransportResponseHandler.INSTANCE_SAME).txGet();
                                         readCount += toRead;
                                     }
                                     indexInput.close();
@@ -195,7 +198,7 @@ public class RecoverySource extends AbstractComponent {
 
                     // now, set the clean files request
                     Set<String> snapshotFiles = Sets.newHashSet(snapshot.getFiles());
-                    transportService.submitRequest(request.targetNode(), RecoveryTarget.Actions.CLEAN_FILES, new RecoveryCleanFilesRequest(shard.shardId(), snapshotFiles), VoidTransportResponseHandler.INSTANCE).txGet();
+                    transportService.submitRequest(request.targetNode(), RecoveryTarget.Actions.CLEAN_FILES, new RecoveryCleanFilesRequest(shard.shardId(), snapshotFiles), VoidTransportResponseHandler.INSTANCE_SAME).txGet();
 
                     stopWatch.stop();
                     logger.trace("[{}][{}] recovery [phase1] to {}: took [{}]", request.shardId().index().name(), request.shardId().id(), request.targetNode(), stopWatch.totalTime());
@@ -212,7 +215,7 @@ public class RecoverySource extends AbstractComponent {
                 logger.trace("[{}][{}] recovery [phase2] to {}: sending transaction log operations", request.shardId().index().name(), request.shardId().id(), request.targetNode());
                 StopWatch stopWatch = new StopWatch().start();
 
-                transportService.submitRequest(request.targetNode(), RecoveryTarget.Actions.PREPARE_TRANSLOG, new RecoveryPrepareForTranslogOperationsRequest(request.shardId()), VoidTransportResponseHandler.INSTANCE).txGet();
+                transportService.submitRequest(request.targetNode(), RecoveryTarget.Actions.PREPARE_TRANSLOG, new RecoveryPrepareForTranslogOperationsRequest(request.shardId()), VoidTransportResponseHandler.INSTANCE_SAME).txGet();
 
                 int totalOperations = sendSnapshot(snapshot);
 
@@ -229,11 +232,11 @@ public class RecoverySource extends AbstractComponent {
                 logger.trace("[{}][{}] recovery [phase3] to {}: sending transaction log operations", request.shardId().index().name(), request.shardId().id(), request.targetNode());
                 StopWatch stopWatch = new StopWatch().start();
                 int totalOperations = sendSnapshot(snapshot);
-                transportService.submitRequest(request.targetNode(), RecoveryTarget.Actions.FINALIZE, new RecoveryFinalizeRecoveryRequest(request.shardId()), VoidTransportResponseHandler.INSTANCE).txGet();
+                transportService.submitRequest(request.targetNode(), RecoveryTarget.Actions.FINALIZE, new RecoveryFinalizeRecoveryRequest(request.shardId()), VoidTransportResponseHandler.INSTANCE_SAME).txGet();
                 if (request.markAsRelocated()) {
                     // TODO what happens if the recovery process fails afterwards, we need to mark this back to started
                     try {
-                        shard.relocated();
+                        shard.relocated("to " + request.targetNode());
                     } catch (IllegalIndexShardStateException e) {
                         // we can ignore this exception since, on the other node, when it moved to phase3
                         // it will also send shard started, which might cause the index shard we work against
@@ -247,26 +250,31 @@ public class RecoverySource extends AbstractComponent {
             }
 
             private int sendSnapshot(Translog.Snapshot snapshot) throws ElasticSearchException {
-                int counter = 0;
+                int ops = 0;
+                long size = 0;
                 int totalOperations = 0;
                 List<Translog.Operation> operations = Lists.newArrayList();
                 while (snapshot.hasNext()) {
                     if (shard.state() == IndexShardState.CLOSED) {
                         throw new IndexShardClosedException(request.shardId());
                     }
-                    operations.add(snapshot.next());
+                    Translog.Operation operation = snapshot.next();
+                    operations.add(operation);
+                    ops += 1;
+                    size += operation.estimateSize();
                     totalOperations++;
-                    if (++counter == translogBatchSize) {
+                    if (ops >= translogOps || size >= translogSize.bytes()) {
                         RecoveryTranslogOperationsRequest translogOperationsRequest = new RecoveryTranslogOperationsRequest(request.shardId(), operations);
-                        transportService.submitRequest(request.targetNode(), RecoveryTarget.Actions.TRANSLOG_OPS, translogOperationsRequest, TransportRequestOptions.options().withCompress(compress).withLowType(), VoidTransportResponseHandler.INSTANCE).txGet();
-                        counter = 0;
-                        operations = Lists.newArrayList();
+                        transportService.submitRequest(request.targetNode(), RecoveryTarget.Actions.TRANSLOG_OPS, translogOperationsRequest, TransportRequestOptions.options().withCompress(compress).withLowType(), VoidTransportResponseHandler.INSTANCE_SAME).txGet();
+                        ops = 0;
+                        size = 0;
+                        operations.clear();
                     }
                 }
                 // send the leftover
                 if (!operations.isEmpty()) {
                     RecoveryTranslogOperationsRequest translogOperationsRequest = new RecoveryTranslogOperationsRequest(request.shardId(), operations);
-                    transportService.submitRequest(request.targetNode(), RecoveryTarget.Actions.TRANSLOG_OPS, translogOperationsRequest, TransportRequestOptions.options().withCompress(compress).withLowType(), VoidTransportResponseHandler.INSTANCE).txGet();
+                    transportService.submitRequest(request.targetNode(), RecoveryTarget.Actions.TRANSLOG_OPS, translogOperationsRequest, TransportRequestOptions.options().withCompress(compress).withLowType(), VoidTransportResponseHandler.INSTANCE_SAME).txGet();
                 }
                 return totalOperations;
             }
@@ -280,26 +288,13 @@ public class RecoverySource extends AbstractComponent {
             return new StartRecoveryRequest();
         }
 
-        @Override public void messageReceived(final StartRecoveryRequest request, final TransportChannel channel) throws Exception {
-            // we don't spawn, but we execute the expensive recovery process on a cached thread pool
-            threadPool.cached().execute(new Runnable() {
-                @Override public void run() {
-                    try {
-                        RecoveryResponse response = recover(request);
-                        channel.sendResponse(response);
-                    } catch (Exception e) {
-                        try {
-                            channel.sendResponse(e);
-                        } catch (Exception e1) {
-                            // ignore
-                        }
-                    }
-                }
-            });
+        @Override public String executor() {
+            return ThreadPool.Names.CACHED;
         }
 
-        @Override public boolean spawn() {
-            return false;
+        @Override public void messageReceived(final StartRecoveryRequest request, final TransportChannel channel) throws Exception {
+            RecoveryResponse response = recover(request);
+            channel.sendResponse(response);
         }
     }
 }

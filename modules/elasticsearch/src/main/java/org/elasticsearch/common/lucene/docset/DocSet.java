@@ -29,7 +29,7 @@ import java.io.IOException;
  */
 public abstract class DocSet extends DocIdSet {
 
-    public static DocSet EMPTY_DOC_SET = new DocSet() {
+    public static final DocSet EMPTY_DOC_SET = new DocSet() {
         @Override public boolean get(int doc) throws IOException {
             return false;
         }
@@ -41,7 +41,13 @@ public abstract class DocSet extends DocIdSet {
         @Override public boolean isCacheable() {
             return true;
         }
+
+        @Override public long sizeInBytes() {
+            return 0;
+        }
     };
 
     public abstract boolean get(int doc) throws IOException;
+
+    public abstract long sizeInBytes();
 }

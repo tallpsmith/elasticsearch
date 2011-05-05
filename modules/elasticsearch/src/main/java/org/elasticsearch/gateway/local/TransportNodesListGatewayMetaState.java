@@ -26,6 +26,7 @@ import org.elasticsearch.action.support.nodes.*;
 import org.elasticsearch.cluster.ClusterName;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.node.DiscoveryNode;
+import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.collect.Lists;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.io.stream.StreamInput;
@@ -35,7 +36,6 @@ import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
-import javax.annotation.Nullable;
 import java.io.IOException;
 import java.util.List;
 import java.util.Set;
@@ -61,12 +61,20 @@ public class TransportNodesListGatewayMetaState extends TransportNodesOperationA
         return execute(new Request(nodesIds).timeout(timeout));
     }
 
+    @Override protected String executor() {
+        return ThreadPool.Names.CACHED;
+    }
+
     @Override protected String transportAction() {
         return "/gateway/local/meta-state";
     }
 
     @Override protected String transportNodeAction() {
         return "/gateway/local/meta-state/node";
+    }
+
+    @Override protected boolean transportCompress() {
+        return true; // compress since the metadata can become large
     }
 
     @Override protected Request newRequest() {

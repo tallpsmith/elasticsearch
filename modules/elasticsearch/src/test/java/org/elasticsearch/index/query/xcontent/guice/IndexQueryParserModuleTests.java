@@ -19,7 +19,6 @@
 
 package org.elasticsearch.index.query.xcontent.guice;
 
-import org.elasticsearch.cache.query.parser.QueryParserCacheModule;
 import org.elasticsearch.common.inject.Injector;
 import org.elasticsearch.common.inject.ModulesBuilder;
 import org.elasticsearch.common.settings.Settings;
@@ -35,6 +34,7 @@ import org.elasticsearch.index.query.xcontent.XContentIndexQueryParser;
 import org.elasticsearch.index.settings.IndexSettingsModule;
 import org.elasticsearch.index.similarity.SimilarityModule;
 import org.elasticsearch.script.ScriptModule;
+import org.elasticsearch.threadpool.ThreadPoolModule;
 import org.testng.annotations.Test;
 
 import static org.elasticsearch.common.settings.ImmutableSettings.*;
@@ -58,9 +58,9 @@ public class IndexQueryParserModuleTests {
         Index index = new Index("test");
         Injector injector = new ModulesBuilder().add(
                 new SettingsModule(settings),
-                new QueryParserCacheModule(settings),
-                new ScriptModule(),
-                new IndexSettingsModule(settings),
+                new ThreadPoolModule(settings),
+                new ScriptModule(settings),
+                new IndexSettingsModule(index, settings),
                 new IndexCacheModule(settings),
                 new AnalysisModule(settings),
                 new IndexEngineModule(settings),

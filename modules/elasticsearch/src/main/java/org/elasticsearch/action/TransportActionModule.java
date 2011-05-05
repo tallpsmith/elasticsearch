@@ -59,6 +59,7 @@ import org.elasticsearch.action.deletebyquery.TransportShardDeleteByQueryAction;
 import org.elasticsearch.action.get.TransportGetAction;
 import org.elasticsearch.action.index.TransportIndexAction;
 import org.elasticsearch.action.mlt.TransportMoreLikeThisAction;
+import org.elasticsearch.action.percolate.TransportPercolateAction;
 import org.elasticsearch.action.search.TransportSearchAction;
 import org.elasticsearch.action.search.TransportSearchScrollAction;
 import org.elasticsearch.action.search.type.*;
@@ -124,12 +125,16 @@ public class TransportActionModule extends AbstractModule {
         bind(TransportSearchQueryThenFetchAction.class).asEagerSingleton();
         bind(TransportSearchDfsQueryAndFetchAction.class).asEagerSingleton();
         bind(TransportSearchQueryAndFetchAction.class).asEagerSingleton();
+        bind(TransportSearchScanAction.class).asEagerSingleton();
         bind(TransportSearchAction.class).asEagerSingleton();
 
+        bind(TransportSearchScrollScanAction.class).asEagerSingleton();
         bind(TransportSearchScrollQueryThenFetchAction.class).asEagerSingleton();
         bind(TransportSearchScrollQueryAndFetchAction.class).asEagerSingleton();
         bind(TransportSearchScrollAction.class).asEagerSingleton();
 
         bind(TransportMoreLikeThisAction.class).asEagerSingleton();
+
+        bind(TransportPercolateAction.class).asEagerSingleton();
     }
 }

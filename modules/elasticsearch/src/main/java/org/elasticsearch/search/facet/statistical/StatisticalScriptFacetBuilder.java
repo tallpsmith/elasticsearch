@@ -82,13 +82,13 @@ public class StatisticalScriptFacetBuilder extends AbstractFacetBuilder {
         return this;
     }
 
-    @Override public void toXContent(XContentBuilder builder, Params params) throws IOException {
+    @Override public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         if (script == null) {
             throw new SearchSourceBuilderException("script must be set on statistical script facet [" + name + "]");
         }
         builder.startObject(name);
 
-        builder.startObject(StatisticalFacetCollectorParser.NAME);
+        builder.startObject(StatisticalFacet.TYPE);
         builder.field("script", script);
         if (lang != null) {
             builder.field("lang", lang);
@@ -101,5 +101,6 @@ public class StatisticalScriptFacetBuilder extends AbstractFacetBuilder {
         addFilterFacetAndGlobal(builder, params);
 
         builder.endObject();
+        return builder;
     }
 }

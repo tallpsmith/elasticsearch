@@ -39,10 +39,7 @@ import org.elasticsearch.index.cache.field.data.FieldDataCache;
 import org.elasticsearch.index.field.data.FieldDataType;
 import org.elasticsearch.index.mapper.MapperParsingException;
 import org.elasticsearch.index.mapper.MergeMappingException;
-import org.elasticsearch.index.mapper.xcontent.MergeContext;
-import org.elasticsearch.index.mapper.xcontent.NumberFieldMapper;
-import org.elasticsearch.index.mapper.xcontent.ParseContext;
-import org.elasticsearch.index.mapper.xcontent.XContentMapper;
+import org.elasticsearch.index.mapper.xcontent.*;
 import org.elasticsearch.index.search.NumericRangeFieldDataFilter;
 
 import java.io.IOException;
@@ -195,7 +192,7 @@ public class IpFieldMapper extends NumberFieldMapper<Long> {
                 includeLower, includeUpper);
     }
 
-    @Override protected Field parseCreateField(ParseContext context) throws IOException {
+    @Override protected Fieldable parseCreateField(ParseContext context) throws IOException {
         String ipAsString;
         if (context.externalValueSet()) {
             ipAsString = (String) context.externalValue();
@@ -213,21 +210,12 @@ public class IpFieldMapper extends NumberFieldMapper<Long> {
         if (ipAsString == null) {
             return null;
         }
-        if (includeInAll == null || includeInAll) {
+        if (context.includeInAll(includeInAll)) {
             context.allEntries().addText(names.fullName(), ipAsString, boost);
         }
 
-        long value = ipToLong(ipAsString);
-        Field field = null;
-        if (stored()) {
-            field = new Field(names.indexName(), Numbers.longToBytes(value), store);
-            if (indexed()) {
-                field.setTokenStream(popCachedStream(precisionStep).setLongValue(value));
-            }
-        } else if (indexed()) {
-            field = new Field(names.indexName(), popCachedStream(precisionStep).setLongValue(value));
-        }
-        return field;
+        final long value = ipToLong(ipAsString);
+        return new LongFieldMapper.CustomLongNumericField(this, value);
     }
 
     @Override public FieldDataType fieldDataType() {

@@ -92,7 +92,7 @@ public class MasterFaultDetection extends AbstractComponent {
         this.transportService = transportService;
         this.nodesProvider = nodesProvider;
 
-        this.connectOnNetworkDisconnect = componentSettings.getAsBoolean("connect_on_network_disconnect", false);
+        this.connectOnNetworkDisconnect = componentSettings.getAsBoolean("connect_on_network_disconnect", true);
         this.pingInterval = componentSettings.getAsTime("ping_interval", timeValueSeconds(1));
         this.pingRetryTimeout = componentSettings.getAsTime("ping_timeout", timeValueSeconds(30));
         this.pingRetryCount = componentSettings.getAsInt("ping_retries", 3);
@@ -157,7 +157,7 @@ public class MasterFaultDetection extends AbstractComponent {
         }
         this.masterPinger = new MasterPinger();
         // start the ping process
-        threadPool.schedule(masterPinger, pingInterval);
+        threadPool.schedule(pingInterval, ThreadPool.Names.SAME, masterPinger);
     }
 
     public void stop(String reason) {
@@ -196,6 +196,12 @@ public class MasterFaultDetection extends AbstractComponent {
             if (connectOnNetworkDisconnect) {
                 try {
                     transportService.connectToNode(node);
+                    // if all is well, make sure we restart the pinger
+                    if (masterPinger != null) {
+                        masterPinger.stop();
+                    }
+                    this.masterPinger = new MasterPinger();
+                    threadPool.schedule(pingInterval, ThreadPool.Names.SAME, masterPinger);
                 } catch (Exception e) {
                     logger.trace("[master] [{}] transport disconnected (with verified connect)", masterNode);
                     notifyMasterFailure(masterNode, "transport disconnected (with verified connect)");
@@ -255,7 +261,7 @@ public class MasterFaultDetection extends AbstractComponent {
             final DiscoveryNode masterToPing = masterNode;
             if (masterToPing == null) {
                 // master is null, should not happen, but we are still running, so reschedule
-                threadPool.schedule(MasterPinger.this, pingInterval);
+                threadPool.schedule(pingInterval, ThreadPool.Names.SAME, MasterPinger.this);
                 return;
             }
             transportService.sendRequest(masterToPing, MasterPingRequestHandler.ACTION, new MasterPingRequest(nodesProvider.nodes().localNode().id(), masterToPing.id()), options().withHighType().withTimeout(pingRetryTimeout),
@@ -277,12 +283,16 @@ public class MasterFaultDetection extends AbstractComponent {
                                     notifyDisconnectedFromMaster();
                                 }
                                 // we don't stop on disconnection from master, we keep pinging it
-                                threadPool.schedule(MasterPinger.this, pingInterval);
+                                threadPool.schedule(pingInterval, ThreadPool.Names.SAME, MasterPinger.this);
                             }
                         }
 
                         @Override public void handleException(TransportException exp) {
                             if (!running) {
+                                return;
+                            }
+                            if (exp instanceof ConnectTransportException) {
+                                // ignore this one, we already handle it by registering a connection listener
                                 return;
                             }
                             synchronized (masterNodeMutex) {
@@ -302,8 +312,8 @@ public class MasterFaultDetection extends AbstractComponent {
                             }
                         }
 
-                        @Override public boolean spawn() {
-                            return false; // no need to spawn, we hardly do anything
+                        @Override public String executor() {
+                            return ThreadPool.Names.SAME;
                         }
                     });
         }
@@ -328,10 +338,8 @@ public class MasterFaultDetection extends AbstractComponent {
             channel.sendResponse(new MasterPingResponseResponse(nodes.nodeExists(request.nodeId)));
         }
 
-
-        @Override public boolean spawn() {
-            // no need to spawn here, we just send a response
-            return false;
+        @Override public String executor() {
+            return ThreadPool.Names.SAME;
         }
     }
 

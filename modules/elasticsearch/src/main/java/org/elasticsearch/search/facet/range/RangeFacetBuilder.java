@@ -149,7 +149,7 @@ public class RangeFacetBuilder extends AbstractFacetBuilder {
         return this;
     }
 
-    @Override public void toXContent(XContentBuilder builder, Params params) throws IOException {
+    @Override public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         if (keyFieldName == null) {
             throw new SearchSourceBuilderException("field must be set on range facet for facet [" + name + "]");
         }
@@ -160,7 +160,7 @@ public class RangeFacetBuilder extends AbstractFacetBuilder {
 
         builder.startObject(name);
 
-        builder.startObject(RangeFacetCollectorParser.NAME);
+        builder.startObject(RangeFacet.TYPE);
         if (valueFieldName != null && !keyFieldName.equals(valueFieldName)) {
             builder.field("key_field", keyFieldName);
             builder.field("value_field", valueFieldName);
@@ -190,6 +190,7 @@ public class RangeFacetBuilder extends AbstractFacetBuilder {
         addFilterFacetAndGlobal(builder, params);
 
         builder.endObject();
+        return builder;
     }
 
     static class Entry {

@@ -26,17 +26,20 @@ import org.elasticsearch.ElasticSearchException;
 import org.elasticsearch.ElasticSearchIllegalArgumentException;
 import org.elasticsearch.cluster.ClusterName;
 import org.elasticsearch.cluster.ClusterService;
-import org.elasticsearch.cluster.metadata.MetaDataCreateIndexService;
 import org.elasticsearch.common.blobstore.hdfs.HdfsBlobStore;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.Module;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.common.util.concurrent.DynamicExecutors;
+import org.elasticsearch.common.util.concurrent.EsExecutors;
 import org.elasticsearch.gateway.blobstore.BlobStoreGateway;
 import org.elasticsearch.threadpool.ThreadPool;
 
 import java.io.IOException;
 import java.net.URI;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
 
 /**
  * @author kimchy (shay.banon)
@@ -47,9 +50,11 @@ public class HdfsGateway extends BlobStoreGateway {
 
     private final FileSystem fileSystem;
 
-    @Inject public HdfsGateway(Settings settings, ClusterService clusterService, MetaDataCreateIndexService createIndexService,
-                               ClusterName clusterName, ThreadPool threadPool) throws IOException {
-        super(settings, clusterService, createIndexService);
+    private final ExecutorService concurrentStreamPool;
+
+    @Inject public HdfsGateway(Settings settings, ThreadPool threadPool, ClusterService clusterService,
+                               ClusterName clusterName) throws IOException {
+        super(settings, threadPool, clusterService);
 
         this.closeFileSystem = componentSettings.getAsBoolean("close_fs", true);
         String uri = componentSettings.get("uri");
@@ -62,7 +67,10 @@ public class HdfsGateway extends BlobStoreGateway {
         }
         Path hPath = new Path(new Path(path), clusterName.value());
 
-        logger.debug("Using uri [{}], path [{}]", uri, hPath);
+        int concurrentStreams = componentSettings.getAsInt("concurrent_streams", 5);
+        this.concurrentStreamPool = DynamicExecutors.newScalingThreadPool(1, concurrentStreams, TimeValue.timeValueSeconds(5).millis(), EsExecutors.daemonThreadFactory(settings, "[s3_stream]"));
+
+        logger.debug("Using uri [{}], path [{}], concurrent_streams [{}]", uri, hPath, concurrentStreams);
 
         Configuration conf = new Configuration();
         Settings hdfsSettings = settings.getByPrefix("hdfs.conf.");
@@ -72,7 +80,7 @@ public class HdfsGateway extends BlobStoreGateway {
 
         fileSystem = FileSystem.get(URI.create(uri), conf);
 
-        initialize(new HdfsBlobStore(settings, fileSystem, threadPool.cached(), hPath), clusterName, null);
+        initialize(new HdfsBlobStore(settings, fileSystem, concurrentStreamPool, hPath), clusterName, null);
     }
 
     @Override public String type() {
@@ -92,5 +100,6 @@ public class HdfsGateway extends BlobStoreGateway {
                 // ignore
             }
         }
+        concurrentStreamPool.shutdown();
     }
 }

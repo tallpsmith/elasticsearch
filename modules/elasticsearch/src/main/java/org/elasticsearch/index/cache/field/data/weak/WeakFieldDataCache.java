@@ -19,6 +19,8 @@
 
 package org.elasticsearch.index.cache.field.data.weak;
 
+import org.elasticsearch.common.Nullable;
+import org.elasticsearch.common.collect.MapEvictionListener;
 import org.elasticsearch.common.collect.MapMaker;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
@@ -28,21 +30,32 @@ import org.elasticsearch.index.field.data.FieldData;
 import org.elasticsearch.index.settings.IndexSettings;
 
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * @author kimchy (shay.banon)
  */
-public class WeakFieldDataCache extends AbstractConcurrentMapFieldDataCache {
+public class WeakFieldDataCache extends AbstractConcurrentMapFieldDataCache implements MapEvictionListener<String, FieldData> {
+
+    private final AtomicLong evictions = new AtomicLong();
 
     @Inject public WeakFieldDataCache(Index index, @IndexSettings Settings indexSettings) {
         super(index, indexSettings);
     }
 
     @Override protected ConcurrentMap<String, FieldData> buildFieldDataMap() {
-        return new MapMaker().weakValues().makeMap();
+        return new MapMaker().weakValues().evictionListener(this).makeMap();
     }
 
     @Override public String type() {
         return "weak";
+    }
+
+    @Override public long evictions() {
+        return evictions.get();
+    }
+
+    @Override public void onEviction(@Nullable String s, @Nullable FieldData fieldData) {
+        evictions.incrementAndGet();
     }
 }

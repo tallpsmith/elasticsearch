@@ -40,20 +40,22 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
 public abstract class TransportIndicesReplicationOperationAction<Request extends IndicesReplicationOperationRequest, Response extends ActionResponse, IndexRequest extends IndexReplicationOperationRequest, IndexResponse extends ActionResponse, ShardRequest extends ShardReplicationOperationRequest, ShardResponse extends ActionResponse>
         extends BaseAction<Request, Response> {
 
-    protected final ThreadPool threadPool;
-
     protected final ClusterService clusterService;
 
     protected final TransportIndexReplicationOperationAction<IndexRequest, IndexResponse, ShardRequest, ShardResponse> indexAction;
 
+
+    final String transportAction;
+
     @Inject public TransportIndicesReplicationOperationAction(Settings settings, TransportService transportService, ClusterService clusterService, ThreadPool threadPool,
                                                               TransportIndexReplicationOperationAction<IndexRequest, IndexResponse, ShardRequest, ShardResponse> indexAction) {
-        super(settings);
-        this.threadPool = threadPool;
+        super(settings, threadPool);
         this.clusterService = clusterService;
         this.indexAction = indexAction;
 
-        transportService.registerHandler(transportAction(), new TransportHandler());
+        this.transportAction = transportAction();
+
+        transportService.registerHandler(transportAction, new TransportHandler());
     }
 
     @Override protected void doExecute(final Request request, final ActionListener<Response> listener) {
@@ -78,15 +80,7 @@ public abstract class TransportIndicesReplicationOperationAction<Request extends
                 @Override public void onResponse(IndexResponse result) {
                     indexResponses.set(indexCounter.getAndIncrement(), result);
                     if (completionCounter.decrementAndGet() == 0) {
-                        if (request.listenerThreaded()) {
-                            threadPool.execute(new Runnable() {
-                                @Override public void run() {
-                                    listener.onResponse(newResponseInstance(request, indexResponses));
-                                }
-                            });
-                        } else {
-                            listener.onResponse(newResponseInstance(request, indexResponses));
-                        }
+                        listener.onResponse(newResponseInstance(request, indexResponses));
                     }
                 }
 
@@ -97,15 +91,7 @@ public abstract class TransportIndicesReplicationOperationAction<Request extends
                         indexResponses.set(index, e);
                     }
                     if (completionCounter.decrementAndGet() == 0) {
-                        if (request.listenerThreaded()) {
-                            threadPool.execute(new Runnable() {
-                                @Override public void run() {
-                                    listener.onResponse(newResponseInstance(request, indexResponses));
-                                }
-                            });
-                        } else {
-                            listener.onResponse(newResponseInstance(request, indexResponses));
-                        }
+                        listener.onResponse(newResponseInstance(request, indexResponses));
                     }
                 }
             });
@@ -132,6 +118,10 @@ public abstract class TransportIndicesReplicationOperationAction<Request extends
             return newRequestInstance();
         }
 
+        @Override public String executor() {
+            return ThreadPool.Names.SAME;
+        }
+
         @Override public void messageReceived(final Request request, final TransportChannel channel) throws Exception {
             // no need for a threaded listener, since we just send a response
             request.listenerThreaded(false);
@@ -148,15 +138,10 @@ public abstract class TransportIndicesReplicationOperationAction<Request extends
                     try {
                         channel.sendResponse(e);
                     } catch (Exception e1) {
-                        logger.warn("Failed to send error response for action [" + transportAction() + "] and request [" + request + "]", e1);
+                        logger.warn("Failed to send error response for action [" + transportAction + "] and request [" + request + "]", e1);
                     }
                 }
             });
-        }
-
-        @Override public boolean spawn() {
-            // no need to spawn, since we always execute in the index one with threadedOperation set to true
-            return false;
         }
     }
 }

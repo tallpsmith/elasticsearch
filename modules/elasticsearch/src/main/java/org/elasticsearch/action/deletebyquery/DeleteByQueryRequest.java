@@ -26,6 +26,7 @@ import org.elasticsearch.action.WriteConsistencyLevel;
 import org.elasticsearch.action.support.replication.IndicesReplicationOperationRequest;
 import org.elasticsearch.action.support.replication.ReplicationType;
 import org.elasticsearch.client.Requests;
+import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Required;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.Unicode;
@@ -38,7 +39,6 @@ import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.index.query.QueryBuilder;
 
-import javax.annotation.Nullable;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.Map;
@@ -293,6 +293,16 @@ public class DeleteByQueryRequest extends IndicesReplicationOperationRequest {
         if (in.readBoolean()) {
             routing = in.readUTF();
         }
+
+        int size = in.readVInt();
+        if (size == 0) {
+            types = Strings.EMPTY_ARRAY;
+        } else {
+            types = new String[size];
+            for (int i = 0; i < size; i++) {
+                types[i] = in.readUTF();
+            }
+        }
     }
 
     public void writeTo(StreamOutput out) throws IOException {
@@ -312,6 +322,11 @@ public class DeleteByQueryRequest extends IndicesReplicationOperationRequest {
         } else {
             out.writeBoolean(true);
             out.writeUTF(routing);
+        }
+
+        out.writeVInt(types.length);
+        for (String type : types) {
+            out.writeUTF(type);
         }
     }
 

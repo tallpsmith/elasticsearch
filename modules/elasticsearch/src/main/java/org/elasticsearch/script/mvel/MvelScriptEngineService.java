@@ -19,17 +19,26 @@
 
 package org.elasticsearch.script.mvel;
 
+import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.search.Scorer;
+import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.math.UnboxedMathUtils;
 import org.elasticsearch.common.mvel2.MVEL;
+import org.elasticsearch.common.mvel2.ParserConfiguration;
 import org.elasticsearch.common.mvel2.ParserContext;
+import org.elasticsearch.common.mvel2.compiler.ExecutableStatement;
+import org.elasticsearch.common.mvel2.integration.impl.MapVariableResolverFactory;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.script.ExecutableScript;
 import org.elasticsearch.script.ScriptEngineService;
+import org.elasticsearch.script.SearchScript;
+import org.elasticsearch.search.lookup.SearchLookup;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -37,20 +46,20 @@ import java.util.Map;
  */
 public class MvelScriptEngineService extends AbstractComponent implements ScriptEngineService {
 
-    private final ParserContext parserContext;
+    private final ParserConfiguration parserConfiguration;
 
     @Inject public MvelScriptEngineService(Settings settings) {
         super(settings);
 
-        parserContext = new ParserContext();
-        parserContext.addPackageImport("java.util");
-        parserContext.addPackageImport("org.elasticsearch.common.trove");
-        parserContext.addPackageImport("org.elasticsearch.common.joda");
-        parserContext.addImport("time", MVEL.getStaticMethod(System.class, "currentTimeMillis", new Class[0]));
+        parserConfiguration = new ParserConfiguration();
+        parserConfiguration.addPackageImport("java.util");
+        parserConfiguration.addPackageImport("org.elasticsearch.common.trove");
+        parserConfiguration.addPackageImport("org.elasticsearch.common.joda");
+        parserConfiguration.addImport("time", MVEL.getStaticMethod(System.class, "currentTimeMillis", new Class[0]));
         // unboxed version of Math, better performance since conversion from boxed to unboxed my mvel is not needed
         for (Method m : UnboxedMathUtils.class.getMethods()) {
             if ((m.getModifiers() & Modifier.STATIC) > 0) {
-                parserContext.addImport(m.getName(), m);
+                parserConfiguration.addImport(m.getName(), m);
             }
         }
     }
@@ -68,7 +77,7 @@ public class MvelScriptEngineService extends AbstractComponent implements Script
     }
 
     @Override public Object compile(String script) {
-        return MVEL.compileExpression(script, parserContext);
+        return MVEL.compileExpression(script, new ParserContext(parserConfiguration));
     }
 
     @Override public Object execute(Object compiledScript, Map vars) {
@@ -79,28 +88,97 @@ public class MvelScriptEngineService extends AbstractComponent implements Script
         return new MvelExecutableScript(compiledScript, vars);
     }
 
+    @Override public SearchScript search(Object compiledScript, SearchLookup lookup, @Nullable Map<String, Object> vars) {
+        return new MvelSearchScript(compiledScript, lookup, vars);
+    }
+
     @Override public Object unwrap(Object value) {
         return value;
     }
 
     public static class MvelExecutableScript implements ExecutableScript {
 
-        private final Object compiledScript;
+        private final ExecutableStatement script;
 
-        private final Map vars;
+        private final MapVariableResolverFactory resolver;
 
-        public MvelExecutableScript(Object compiledScript, Map vars) {
-            this.compiledScript = compiledScript;
-            this.vars = vars;
+        public MvelExecutableScript(Object script, Map vars) {
+            this.script = (ExecutableStatement) script;
+            if (vars != null) {
+                this.resolver = new MapVariableResolverFactory(vars);
+            } else {
+                this.resolver = new MapVariableResolverFactory(new HashMap());
+            }
+        }
+
+        @Override public void setNextVar(String name, Object value) {
+            resolver.createVariable(name, value);
         }
 
         @Override public Object run() {
-            return MVEL.executeExpression(compiledScript, vars);
+            return script.getValue(null, resolver);
         }
 
-        @Override public Object run(Map vars) {
-            vars.putAll(this.vars);
-            return MVEL.executeExpression(compiledScript, vars);
+        @Override public Object unwrap(Object value) {
+            return value;
+        }
+    }
+
+    public static class MvelSearchScript implements SearchScript {
+
+        private final ExecutableStatement script;
+
+        private final SearchLookup lookup;
+
+        private final MapVariableResolverFactory resolver;
+
+        public MvelSearchScript(Object script, SearchLookup lookup, Map<String, Object> vars) {
+            this.script = (ExecutableStatement) script;
+            this.lookup = lookup;
+            if (vars != null) {
+                this.resolver = new MapVariableResolverFactory(vars);
+            } else {
+                this.resolver = new MapVariableResolverFactory(new HashMap());
+            }
+            for (Map.Entry<String, Object> entry : lookup.asMap().entrySet()) {
+                resolver.createVariable(entry.getKey(), entry.getValue());
+            }
+        }
+
+        @Override public void setScorer(Scorer scorer) {
+            lookup.setScorer(scorer);
+        }
+
+        @Override public void setNextReader(IndexReader reader) {
+            lookup.setNextReader(reader);
+        }
+
+        @Override public void setNextDocId(int doc) {
+            lookup.setNextDocId(doc);
+        }
+
+        @Override public void setNextScore(float score) {
+            resolver.createVariable("_score", score);
+        }
+
+        @Override public void setNextVar(String name, Object value) {
+            resolver.createVariable(name, value);
+        }
+
+        @Override public Object run() {
+            return script.getValue(null, resolver);
+        }
+
+        @Override public float runAsFloat() {
+            return ((Number) run()).floatValue();
+        }
+
+        @Override public long runAsLong() {
+            return ((Number) run()).longValue();
+        }
+
+        @Override public double runAsDouble() {
+            return ((Number) run()).doubleValue();
         }
 
         @Override public Object unwrap(Object value) {

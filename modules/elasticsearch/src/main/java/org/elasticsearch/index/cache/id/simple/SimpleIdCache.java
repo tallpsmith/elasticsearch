@@ -24,16 +24,22 @@ import org.apache.lucene.index.Term;
 import org.apache.lucene.index.TermDocs;
 import org.apache.lucene.index.TermEnum;
 import org.apache.lucene.util.StringHelper;
+import org.elasticsearch.ElasticSearchException;
 import org.elasticsearch.common.BytesWrap;
 import org.elasticsearch.common.collect.MapBuilder;
 import org.elasticsearch.common.collect.MapMaker;
 import org.elasticsearch.common.inject.Inject;
+import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.trove.ExtTObjectIntHasMap;
+import org.elasticsearch.common.trove.impl.Constants;
+import org.elasticsearch.index.AbstractIndexComponent;
+import org.elasticsearch.index.Index;
 import org.elasticsearch.index.cache.id.IdCache;
 import org.elasticsearch.index.cache.id.IdReaderCache;
 import org.elasticsearch.index.mapper.ParentFieldMapper;
 import org.elasticsearch.index.mapper.Uid;
 import org.elasticsearch.index.mapper.UidFieldMapper;
+import org.elasticsearch.index.settings.IndexSettings;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -44,28 +50,33 @@ import java.util.concurrent.ConcurrentMap;
 /**
  * @author kimchy (shay.banon)
  */
-public class SimpleIdCache implements IdCache {
+public class SimpleIdCache extends AbstractIndexComponent implements IdCache, IndexReader.ReaderFinishedListener {
 
     private final ConcurrentMap<Object, SimpleIdReaderCache> idReaders;
 
-    @Inject public SimpleIdCache() {
+    @Inject public SimpleIdCache(Index index, @IndexSettings Settings indexSettings) {
+        super(index, indexSettings);
         idReaders = new MapMaker().weakKeys().makeMap();
+    }
+
+    @Override public void close() throws ElasticSearchException {
+        clear();
     }
 
     @Override public void clear() {
         idReaders.clear();
     }
 
-    @Override public void clear(IndexReader reader) {
-        idReaders.remove(reader.getFieldCacheKey());
+    @Override public void finished(IndexReader reader) {
+        clear(reader);
     }
 
-    @Override public void clearUnreferenced() {
-        // nothing to do here...
+    @Override public void clear(IndexReader reader) {
+        idReaders.remove(reader.getCoreCacheKey());
     }
 
     @Override public IdReaderCache reader(IndexReader reader) {
-        return idReaders.get(reader.getFieldCacheKey());
+        return idReaders.get(reader.getCoreCacheKey());
     }
 
     @SuppressWarnings({"unchecked"}) @Override public Iterator<IdReaderCache> iterator() {
@@ -87,13 +98,14 @@ public class SimpleIdCache implements IdCache {
 
                 // first, go over and load all the id->doc map for all types
                 for (IndexReader reader : readers) {
-                    if (idReaders.containsKey(reader.getFieldCacheKey())) {
+                    if (idReaders.containsKey(reader.getCoreCacheKey())) {
                         // no need, continue
                         continue;
                     }
 
+                    reader.addReaderFinishedListener(this);
                     HashMap<String, TypeBuilder> readerBuilder = new HashMap<String, TypeBuilder>();
-                    builders.put(reader.getFieldCacheKey(), readerBuilder);
+                    builders.put(reader.getCoreCacheKey(), readerBuilder);
 
                     String field = StringHelper.intern(UidFieldMapper.NAME);
                     TermDocs termDocs = reader.termDocs();
@@ -130,12 +142,12 @@ public class SimpleIdCache implements IdCache {
                 // now, go and load the docId->parentId map
 
                 for (IndexReader reader : readers) {
-                    if (idReaders.containsKey(reader.getFieldCacheKey())) {
+                    if (idReaders.containsKey(reader.getCoreCacheKey())) {
                         // no need, continue
                         continue;
                     }
 
-                    Map<String, TypeBuilder> readerBuilder = builders.get(reader.getFieldCacheKey());
+                    Map<String, TypeBuilder> readerBuilder = builders.get(reader.getCoreCacheKey());
 
                     int t = 1;  // current term number (0 indicated null value)
                     String field = StringHelper.intern(ParentFieldMapper.NAME);
@@ -218,7 +230,7 @@ public class SimpleIdCache implements IdCache {
 
     private boolean refreshNeeded(IndexReader[] readers) {
         for (IndexReader reader : readers) {
-            if (!idReaders.containsKey(reader.getFieldCacheKey())) {
+            if (!idReaders.containsKey(reader.getCoreCacheKey())) {
                 return true;
             }
         }
@@ -226,7 +238,7 @@ public class SimpleIdCache implements IdCache {
     }
 
     static class TypeBuilder {
-        final ExtTObjectIntHasMap<BytesWrap> idToDoc = new ExtTObjectIntHasMap<BytesWrap>().defaultReturnValue(-1);
+        final ExtTObjectIntHasMap<BytesWrap> idToDoc = new ExtTObjectIntHasMap<BytesWrap>(Constants.DEFAULT_CAPACITY, Constants.DEFAULT_LOAD_FACTOR, -1);
         final ArrayList<BytesWrap> parentIdsValues = new ArrayList<BytesWrap>();
         final int[] parentIdsOrdinals;
 

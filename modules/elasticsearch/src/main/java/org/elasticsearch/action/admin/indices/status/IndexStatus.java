@@ -20,8 +20,9 @@
 package org.elasticsearch.action.admin.indices.status;
 
 import org.elasticsearch.common.collect.Maps;
-import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeValue;
+import org.elasticsearch.index.merge.MergeStats;
+import org.elasticsearch.index.refresh.RefreshStats;
 
 import java.util.Iterator;
 import java.util.List;
@@ -38,11 +39,8 @@ public class IndexStatus implements Iterable<IndexShardStatus> {
 
     private final Map<Integer, IndexShardStatus> indexShards;
 
-    private final Settings settings;
-
-    IndexStatus(String index, Settings settings, ShardStatus[] shards) {
+    IndexStatus(String index, ShardStatus[] shards) {
         this.index = index;
-        this.settings = settings;
 
         Map<Integer, List<ShardStatus>> tmpIndexShards = Maps.newHashMap();
         for (ShardStatus shard : shards) {
@@ -79,14 +77,35 @@ public class IndexStatus implements Iterable<IndexShardStatus> {
         return shards();
     }
 
-    public Settings settings() {
-        return this.settings;
+    /**
+     * Returns only the primary shards store size in bytes.
+     */
+    public ByteSizeValue primaryStoreSize() {
+        long bytes = -1;
+        for (IndexShardStatus shard : this) {
+            if (shard.primaryStoreSize() != null) {
+                if (bytes == -1) {
+                    bytes = 0;
+                }
+                bytes += shard.primaryStoreSize().bytes();
+            }
+        }
+        if (bytes == -1) {
+            return null;
+        }
+        return new ByteSizeValue(bytes);
     }
 
-    public Settings getSettings() {
-        return settings();
+    /**
+     * Returns only the primary shards store size in bytes.
+     */
+    public ByteSizeValue getPrimaryStoreSize() {
+        return primaryStoreSize();
     }
 
+    /**
+     * Returns the full store size in bytes, of both primaries and replicas.
+     */
     public ByteSizeValue storeSize() {
         long bytes = -1;
         for (IndexShardStatus shard : this) {
@@ -103,6 +122,9 @@ public class IndexStatus implements Iterable<IndexShardStatus> {
         return new ByteSizeValue(bytes);
     }
 
+    /**
+     * Returns the full store size in bytes, of both primaries and replicas.
+     */
     public ByteSizeValue getStoreSize() {
         return storeSize();
     }
@@ -148,6 +170,36 @@ public class IndexStatus implements Iterable<IndexShardStatus> {
 
     public DocsStatus getDocs() {
         return docs();
+    }
+
+    /**
+     * Total merges of this index.
+     */
+    public MergeStats mergeStats() {
+        MergeStats mergeStats = new MergeStats();
+        for (IndexShardStatus shard : this) {
+            mergeStats.add(shard.mergeStats());
+        }
+        return mergeStats;
+    }
+
+    /**
+     * Total merges of this index.
+     */
+    public MergeStats getMergeStats() {
+        return this.mergeStats();
+    }
+
+    public RefreshStats refreshStats() {
+        RefreshStats refreshStats = new RefreshStats();
+        for (IndexShardStatus shard : this) {
+            refreshStats.add(shard.refreshStats());
+        }
+        return refreshStats;
+    }
+
+    public RefreshStats getRefreshStats() {
+        return refreshStats();
     }
 
     @Override public Iterator<IndexShardStatus> iterator() {

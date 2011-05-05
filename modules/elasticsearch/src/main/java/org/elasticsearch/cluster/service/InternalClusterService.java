@@ -20,21 +20,20 @@
 package org.elasticsearch.cluster.service;
 
 import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticSearchIllegalStateException;
 import org.elasticsearch.cluster.*;
+import org.elasticsearch.cluster.block.ClusterBlock;
+import org.elasticsearch.cluster.block.ClusterBlocks;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.cluster.routing.operation.OperationRouting;
-import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.common.component.AbstractLifecycleComponent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.timer.Timeout;
-import org.elasticsearch.common.timer.TimerTask;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.util.concurrent.jsr166y.LinkedTransferQueue;
 import org.elasticsearch.discovery.DiscoveryService;
 import org.elasticsearch.threadpool.ThreadPool;
-import org.elasticsearch.timer.TimerService;
 import org.elasticsearch.transport.TransportService;
 
 import java.util.Iterator;
@@ -42,6 +41,7 @@ import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 import static java.util.concurrent.Executors.*;
@@ -55,41 +55,54 @@ public class InternalClusterService extends AbstractLifecycleComponent<ClusterSe
 
     private final ThreadPool threadPool;
 
-    private final TimerService timerService;
-
     private final DiscoveryService discoveryService;
 
     private final OperationRouting operationRouting;
 
     private final TransportService transportService;
 
+    private final TimeValue reconnectInterval;
+
     private volatile ExecutorService updateTasksExecutor;
 
     private final List<ClusterStateListener> clusterStateListeners = new CopyOnWriteArrayList<ClusterStateListener>();
 
-    private final Queue<Tuple<Timeout, NotifyTimeout>> onGoingTimeouts = new LinkedTransferQueue<Tuple<Timeout, NotifyTimeout>>();
+    private final Queue<NotifyTimeout> onGoingTimeouts = new LinkedTransferQueue<NotifyTimeout>();
 
     private volatile ClusterState clusterState = newClusterStateBuilder().build();
 
-    @Inject public InternalClusterService(Settings settings, DiscoveryService discoveryService, OperationRouting operationRouting, TransportService transportService, ThreadPool threadPool,
-                                          TimerService timerService) {
+    private final ClusterBlocks.Builder initialBlocks = ClusterBlocks.builder();
+
+    private volatile ScheduledFuture reconnectToNodes;
+
+    @Inject public InternalClusterService(Settings settings, DiscoveryService discoveryService, OperationRouting operationRouting, TransportService transportService, ThreadPool threadPool) {
         super(settings);
         this.operationRouting = operationRouting;
         this.transportService = transportService;
         this.discoveryService = discoveryService;
         this.threadPool = threadPool;
-        this.timerService = timerService;
+
+        this.reconnectInterval = componentSettings.getAsTime("reconnect_interval", TimeValue.timeValueSeconds(10));
+    }
+
+    public void addInitialStateBlock(ClusterBlock block) throws ElasticSearchIllegalStateException {
+        if (lifecycle.started()) {
+            throw new ElasticSearchIllegalStateException("can't set initial block when started");
+        }
+        initialBlocks.addGlobalBlock(block);
     }
 
     @Override protected void doStart() throws ElasticSearchException {
-        this.clusterState = newClusterStateBuilder().build();
+        this.clusterState = newClusterStateBuilder().blocks(initialBlocks).build();
         this.updateTasksExecutor = newSingleThreadExecutor(daemonThreadFactory(settings, "clusterService#updateTask"));
+        this.reconnectToNodes = threadPool.schedule(reconnectInterval, ThreadPool.Names.CACHED, new ReconnectToNodes());
     }
 
     @Override protected void doStop() throws ElasticSearchException {
-        for (Tuple<Timeout, NotifyTimeout> onGoingTimeout : onGoingTimeouts) {
-            onGoingTimeout.v1().cancel();
-            onGoingTimeout.v2().listener.onClose();
+        this.reconnectToNodes.cancel(true);
+        for (NotifyTimeout onGoingTimeout : onGoingTimeouts) {
+            onGoingTimeout.cancel();
+            onGoingTimeout.listener.onClose();
         }
         updateTasksExecutor.shutdown();
         try {
@@ -120,10 +133,10 @@ public class InternalClusterService extends AbstractLifecycleComponent<ClusterSe
 
     public void remove(ClusterStateListener listener) {
         clusterStateListeners.remove(listener);
-        for (Iterator<Tuple<Timeout, NotifyTimeout>> it = onGoingTimeouts.iterator(); it.hasNext();) {
-            Tuple<Timeout, NotifyTimeout> tuple = it.next();
-            if (tuple.v2().listener.equals(listener)) {
-                tuple.v1().cancel();
+        for (Iterator<NotifyTimeout> it = onGoingTimeouts.iterator(); it.hasNext();) {
+            NotifyTimeout timeout = it.next();
+            if (timeout.listener.equals(listener)) {
+                timeout.cancel();
                 it.remove();
             }
         }
@@ -135,8 +148,8 @@ public class InternalClusterService extends AbstractLifecycleComponent<ClusterSe
             return;
         }
         NotifyTimeout notifyTimeout = new NotifyTimeout(listener, timeout);
-        Timeout timerTimeout = timerService.newTimeout(notifyTimeout, timeout, TimerService.ExecutionType.THREADED);
-        onGoingTimeouts.add(new Tuple<Timeout, NotifyTimeout>(timerTimeout, notifyTimeout));
+        notifyTimeout.future = threadPool.schedule(timeout, ThreadPool.Names.CACHED, notifyTimeout);
+        onGoingTimeouts.add(notifyTimeout);
         clusterStateListeners.add(listener);
         // call the post added notification on the same event thread
         updateTasksExecutor.execute(new Runnable() {
@@ -202,6 +215,9 @@ public class InternalClusterService extends AbstractLifecycleComponent<ClusterSe
 
                     // TODO, do this in parallel (and wait)
                     for (DiscoveryNode node : nodesDelta.addedNodes()) {
+                        if (!nodeRequiresConnection(node)) {
+                            continue;
+                        }
                         try {
                             transportService.connectToNode(node);
                         } catch (Exception e) {
@@ -241,17 +257,22 @@ public class InternalClusterService extends AbstractLifecycleComponent<ClusterSe
         });
     }
 
-    private class NotifyTimeout implements TimerTask {
+    class NotifyTimeout implements Runnable {
         final TimeoutClusterStateListener listener;
         final TimeValue timeout;
+        ScheduledFuture future;
 
-        private NotifyTimeout(TimeoutClusterStateListener listener, TimeValue timeout) {
+        NotifyTimeout(TimeoutClusterStateListener listener, TimeValue timeout) {
             this.listener = listener;
             this.timeout = timeout;
         }
 
-        @Override public void run(Timeout timeout) throws Exception {
-            if (timeout.isCancelled()) {
+        public void cancel() {
+            future.cancel(false);
+        }
+
+        @Override public void run() {
+            if (future.isCancelled()) {
                 return;
             }
             if (lifecycle.stoppedOrClosed()) {
@@ -261,5 +282,46 @@ public class InternalClusterService extends AbstractLifecycleComponent<ClusterSe
             }
             // note, we rely on the listener to remove itself in case of timeout if needed
         }
+    }
+
+    private class ReconnectToNodes implements Runnable {
+        @Override public void run() {
+            // master node will check against all nodes if its alive with certain discoveries implementations,
+            // but we can't rely on that, so we check on it as well
+            for (DiscoveryNode node : clusterState.nodes()) {
+                if (lifecycle.stoppedOrClosed()) {
+                    return;
+                }
+                if (!nodeRequiresConnection(node)) {
+                    continue;
+                }
+                if (clusterState.nodes().nodeExists(node.id())) { // we double check existence of node since connectToNode might take time...
+                    if (!transportService.nodeConnected(node)) {
+                        try {
+                            transportService.connectToNode(node);
+                        } catch (Exception e) {
+                            if (lifecycle.stoppedOrClosed()) {
+                                return;
+                            }
+                            if (clusterState.nodes().nodeExists(node.id())) { // double check here as well, maybe its gone?
+                                logger.warn("failed to reconnect to node {}", e, node);
+                            }
+                        }
+                    }
+                }
+            }
+            if (lifecycle.started()) {
+                reconnectToNodes = threadPool.schedule(reconnectInterval, ThreadPool.Names.CACHED, this);
+            }
+        }
+    }
+
+    private boolean nodeRequiresConnection(DiscoveryNode node) {
+        if (localNode().clientNode()) {
+            if (node.clientNode()) {
+                return false;
+            }
+        }
+        return true;
     }
 }

@@ -34,6 +34,10 @@ public class QueryBinaryParseElement implements SearchParseElement {
         XContentIndexQueryParser indexQueryParser = (XContentIndexQueryParser) context.queryParser();
         byte[] querySource = parser.binaryValue();
         XContentParser qSourceParser = XContentFactory.xContent(querySource).createParser(querySource);
-        context.parsedQuery(indexQueryParser.parse(qSourceParser));
+        try {
+            context.parsedQuery(indexQueryParser.parse(qSourceParser));
+        } finally {
+            qSourceParser.close();
+        }
     }
 }

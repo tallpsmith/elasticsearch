@@ -21,6 +21,7 @@ package org.elasticsearch.search.facet;
 
 import org.elasticsearch.index.query.xcontent.XContentFilterBuilder;
 import org.elasticsearch.index.query.xcontent.XContentQueryBuilder;
+import org.elasticsearch.search.facet.datehistogram.DateHistogramFacetBuilder;
 import org.elasticsearch.search.facet.filter.FilterFacetBuilder;
 import org.elasticsearch.search.facet.geodistance.GeoDistanceFacetBuilder;
 import org.elasticsearch.search.facet.histogram.HistogramFacetBuilder;
@@ -31,6 +32,7 @@ import org.elasticsearch.search.facet.range.RangeScriptFacetBuilder;
 import org.elasticsearch.search.facet.statistical.StatisticalFacetBuilder;
 import org.elasticsearch.search.facet.statistical.StatisticalScriptFacetBuilder;
 import org.elasticsearch.search.facet.terms.TermsFacetBuilder;
+import org.elasticsearch.search.facet.termsstats.TermsStatsFacetBuilder;
 
 /**
  * @author kimchy (shay.banon)
@@ -57,6 +59,10 @@ public class FacetBuilders {
         return new TermsFacetBuilder(facetName);
     }
 
+    public static TermsStatsFacetBuilder termsStatsFacet(String facetName) {
+        return new TermsStatsFacetBuilder(facetName);
+    }
+
     public static StatisticalFacetBuilder statisticalFacet(String facetName) {
         return new StatisticalFacetBuilder(facetName);
     }
@@ -67,6 +73,10 @@ public class FacetBuilders {
 
     public static HistogramFacetBuilder histogramFacet(String facetName) {
         return new HistogramFacetBuilder(facetName);
+    }
+
+    public static DateHistogramFacetBuilder dateHistogramFacet(String facetName) {
+        return new DateHistogramFacetBuilder(facetName);
     }
 
     public static HistogramScriptFacetBuilder histogramScriptFacet(String facetName) {

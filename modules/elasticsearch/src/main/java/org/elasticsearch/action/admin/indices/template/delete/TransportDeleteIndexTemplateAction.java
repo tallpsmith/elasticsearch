@@ -24,6 +24,7 @@ import org.elasticsearch.action.TransportActions;
 import org.elasticsearch.action.support.master.TransportMasterNodeOperationAction;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.ClusterState;
+import org.elasticsearch.cluster.block.ClusterBlockException;
 import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.cluster.metadata.MetaDataIndexTemplateService;
 import org.elasticsearch.common.inject.Inject;
@@ -49,6 +50,10 @@ public class TransportDeleteIndexTemplateAction extends TransportMasterNodeOpera
         this.indexTemplateService = indexTemplateService;
     }
 
+    @Override protected String executor() {
+        return ThreadPool.Names.CACHED;
+    }
+
     @Override protected String transportAction() {
         return TransportActions.Admin.Indices.DELETE_INDEX_TEMPLATE;
     }
@@ -61,8 +66,8 @@ public class TransportDeleteIndexTemplateAction extends TransportMasterNodeOpera
         return new DeleteIndexTemplateResponse();
     }
 
-    @Override protected void checkBlock(DeleteIndexTemplateRequest request, ClusterState state) {
-        state.blocks().indexBlockedRaiseException(ClusterBlockLevel.METADATA, "");
+    @Override protected ClusterBlockException checkBlock(DeleteIndexTemplateRequest request, ClusterState state) {
+        return state.blocks().indexBlockedException(ClusterBlockLevel.METADATA, "");
     }
 
     @Override protected DeleteIndexTemplateResponse masterOperation(DeleteIndexTemplateRequest request, ClusterState state) throws ElasticSearchException {

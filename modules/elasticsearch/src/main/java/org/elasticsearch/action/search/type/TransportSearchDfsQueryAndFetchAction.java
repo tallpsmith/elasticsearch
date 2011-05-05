@@ -97,7 +97,7 @@ public class TransportSearchDfsQueryAndFetchAction extends TransportSearchTypeAc
             }
             if (localOperations > 0) {
                 if (request.operationThreading() == SearchOperationThreading.SINGLE_THREAD) {
-                    threadPool.execute(new Runnable() {
+                    threadPool.executor(ThreadPool.Names.SEARCH).execute(new Runnable() {
                         @Override public void run() {
                             for (final DfsSearchResult dfsResult : dfsResults) {
                                 DiscoveryNode node = nodes.get(dfsResult.shardTarget().nodeId());
@@ -115,7 +115,7 @@ public class TransportSearchDfsQueryAndFetchAction extends TransportSearchTypeAc
                         if (node.id().equals(nodes.localNodeId())) {
                             final QuerySearchRequest querySearchRequest = new QuerySearchRequest(dfsResult.id(), dfs);
                             if (localAsync) {
-                                threadPool.execute(new Runnable() {
+                                threadPool.executor(ThreadPool.Names.SEARCH).execute(new Runnable() {
                                     @Override public void run() {
                                         executeSecondPhase(dfsResult, counter, node, querySearchRequest);
                                     }
@@ -156,7 +156,11 @@ public class TransportSearchDfsQueryAndFetchAction extends TransportSearchTypeAc
             try {
                 innerFinishHim();
             } catch (Exception e) {
-                invokeListener(new ReduceSearchPhaseException("query_fetch", "", e, buildShardFailures()));
+                ReduceSearchPhaseException failure = new ReduceSearchPhaseException("query_fetch", "", e, buildShardFailures());
+                if (logger.isDebugEnabled()) {
+                    logger.debug("failed to reduce search", failure);
+                }
+                listener.onFailure(failure);
             } finally {
                 searchCache.releaseDfsResults(dfsResults);
                 searchCache.releaseQueryFetchResults(queryFetchResults);
@@ -168,9 +172,9 @@ public class TransportSearchDfsQueryAndFetchAction extends TransportSearchTypeAc
             final InternalSearchResponse internalResponse = searchPhaseController.merge(sortedShardList, queryFetchResults, queryFetchResults);
             String scrollId = null;
             if (request.scroll() != null) {
-                scrollId = buildScrollId(request.searchType(), dfsResults);
+                scrollId = buildScrollId(request.searchType(), dfsResults, null);
             }
-            invokeListener(new SearchResponse(internalResponse, scrollId, expectedSuccessfulOps, successulOps.get(), buildTookInMillis(), buildShardFailures()));
+            listener.onResponse(new SearchResponse(internalResponse, scrollId, expectedSuccessfulOps, successulOps.get(), buildTookInMillis(), buildShardFailures()));
         }
     }
 }

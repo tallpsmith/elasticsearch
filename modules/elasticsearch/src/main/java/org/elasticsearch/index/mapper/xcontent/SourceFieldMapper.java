@@ -21,6 +21,7 @@ package org.elasticsearch.index.mapper.xcontent;
 
 import org.apache.lucene.document.*;
 import org.elasticsearch.ElasticSearchParseException;
+import org.elasticsearch.common.compress.lzf.LZF;
 import org.elasticsearch.common.compress.lzf.LZFDecoder;
 import org.elasticsearch.common.compress.lzf.LZFEncoder;
 import org.elasticsearch.common.lucene.Lucene;
@@ -51,7 +52,7 @@ public class SourceFieldMapper extends AbstractFieldMapper<byte[]> implements or
 
         private boolean enabled = Defaults.ENABLED;
 
-        private long compressThreshold = -1;
+        private long compressThreshold = Defaults.COMPRESS_THRESHOLD;
 
         private Boolean compress = null;
 
@@ -104,10 +105,6 @@ public class SourceFieldMapper extends AbstractFieldMapper<byte[]> implements or
         return this.enabled;
     }
 
-    @Override public boolean compressed() {
-        return compress != null && compress;
-    }
-
     public FieldSelector fieldSelector() {
         return this.fieldSelector;
     }
@@ -116,13 +113,20 @@ public class SourceFieldMapper extends AbstractFieldMapper<byte[]> implements or
         if (!enabled) {
             return null;
         }
+        if (store == Field.Store.NO) {
+            return null;
+        }
+        if (context.flyweight()) {
+            return null;
+        }
         byte[] data = context.source();
-        if (compress != null && compress) {
+        if (compress != null && compress && !LZF.isCompressed(data)) {
             if (compressThreshold == -1 || data.length > compressThreshold) {
-                data = LZFEncoder.encodeWithCache(data, data.length);
+                data = LZFEncoder.encode(data, data.length);
+                context.source(data);
             }
         }
-        return new Field(names.indexName(), data, store);
+        return new Field(names().indexName(), data);
     }
 
     @Override public byte[] value(Document document) {
@@ -139,7 +143,7 @@ public class SourceFieldMapper extends AbstractFieldMapper<byte[]> implements or
         if (value == null) {
             return value;
         }
-        if (LZFDecoder.isCompressed(value)) {
+        if (LZF.isCompressed(value)) {
             try {
                 return LZFDecoder.decode(value);
             } catch (IOException e) {
@@ -181,10 +185,10 @@ public class SourceFieldMapper extends AbstractFieldMapper<byte[]> implements or
         return CONTENT_TYPE;
     }
 
-    @Override public void toXContent(XContentBuilder builder, Params params) throws IOException {
+    @Override public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         // all are defaults, no need to write it at all
         if (enabled == Defaults.ENABLED && compress == null && compressThreshold == -1) {
-            return;
+            return builder;
         }
         builder.startObject(contentType());
         if (enabled != Defaults.ENABLED) {
@@ -197,6 +201,7 @@ public class SourceFieldMapper extends AbstractFieldMapper<byte[]> implements or
             builder.field("compress_threshold", new ByteSizeValue(compressThreshold).toString());
         }
         builder.endObject();
+        return builder;
     }
 
     @Override public void merge(XContentMapper mergeWith, MergeContext mergeContext) throws MergeMappingException {

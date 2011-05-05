@@ -19,13 +19,14 @@
 
 package org.elasticsearch.common.xcontent.smile;
 
-import org.elasticsearch.common.io.FastByteArrayOutputStream;
 import org.elasticsearch.common.jackson.JsonGenerator;
 import org.elasticsearch.common.jackson.smile.SmileParser;
 import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.common.xcontent.json.JsonXContentGenerator;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 
 /**
  * @author kimchy (shay.banon)
@@ -40,7 +41,18 @@ public class SmileXContentGenerator extends JsonXContentGenerator {
         return XContentType.SMILE;
     }
 
-    @Override public void writeRawField(String fieldName, byte[] content, FastByteArrayOutputStream bos) throws IOException {
+    @Override public void writeRawField(String fieldName, InputStream content, OutputStream bos) throws IOException {
+        writeFieldName(fieldName);
+        SmileParser parser = SmileXContent.smileFactory.createJsonParser(content);
+        try {
+            parser.nextToken();
+            generator.copyCurrentStructure(parser);
+        } finally {
+            parser.close();
+        }
+    }
+
+    @Override public void writeRawField(String fieldName, byte[] content, OutputStream bos) throws IOException {
         writeFieldName(fieldName);
         SmileParser parser = SmileXContent.smileFactory.createJsonParser(content);
         try {

@@ -24,8 +24,7 @@ import org.elasticsearch.action.get.GetRequest;
 import org.elasticsearch.action.get.GetResponse;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.client.action.support.BaseRequestBuilder;
-
-import javax.annotation.Nullable;
+import org.elasticsearch.common.Nullable;
 
 /**
  * A get document action request builder.
@@ -68,6 +67,16 @@ public class GetRequestBuilder extends BaseRequestBuilder<GetRequest, GetRespons
      */
     public GetRequestBuilder setRouting(String routing) {
         request.routing(routing);
+        return this;
+    }
+
+    /**
+     * Sets the preference to execute the search. Defaults to randomize across shards. Can be set to
+     * <tt>_local</tt> to prefer local shards, <tt>_primary</tt> to execute only on primary shards, or
+     * a custom value, which guarantees that the same order will be used across different requests.
+     */
+    public GetRequestBuilder setPreference(String preference) {
+        request.preference(preference);
         return this;
     }
 

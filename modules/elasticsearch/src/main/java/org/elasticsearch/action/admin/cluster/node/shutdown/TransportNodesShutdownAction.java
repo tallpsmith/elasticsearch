@@ -64,6 +64,10 @@ public class TransportNodesShutdownAction extends TransportMasterNodeOperationAc
         this.transportService.registerHandler(NodeShutdownRequestHandler.ACTION, new NodeShutdownRequestHandler());
     }
 
+    @Override protected String executor() {
+        return ThreadPool.Names.CACHED;
+    }
+
     @Override protected String transportAction() {
         return TransportActions.Admin.Cluster.Node.SHUTDOWN;
     }
@@ -95,7 +99,8 @@ public class TransportNodesShutdownAction extends TransportMasterNodeOperationAc
         Set<DiscoveryNode> nodes = Sets.newHashSet();
         if (Actions.isAllNodes(request.nodesIds)) {
             logger.info("[cluster_shutdown]: requested, shutting down in [{}]", request.delay);
-            nodes.addAll(state.nodes().nodes().values());
+            nodes.addAll(state.nodes().dataNodes().values());
+            nodes.addAll(state.nodes().masterNodes().values());
             Thread t = new Thread(new Runnable() {
                 @Override public void run() {
                     try {
@@ -114,7 +119,7 @@ public class TransportNodesShutdownAction extends TransportMasterNodeOperationAc
                             latch.countDown();
                         } else {
                             logger.trace("[cluster_shutdown]: sending shutdown request to [{}]", node);
-                            transportService.sendRequest(node, NodeShutdownRequestHandler.ACTION, VoidStreamable.INSTANCE, new VoidTransportResponseHandler() {
+                            transportService.sendRequest(node, NodeShutdownRequestHandler.ACTION, VoidStreamable.INSTANCE, new VoidTransportResponseHandler(ThreadPool.Names.SAME) {
                                 @Override public void handleResponse(VoidStreamable response) {
                                     logger.trace("[cluster_shutdown]: received shutdown response from [{}]", node);
                                     latch.countDown();
@@ -136,7 +141,7 @@ public class TransportNodesShutdownAction extends TransportMasterNodeOperationAc
 
                     // now, kill the master
                     logger.trace("[cluster_shutdown]: shutting down the master [{}]", state.nodes().masterNode());
-                    transportService.sendRequest(state.nodes().masterNode(), NodeShutdownRequestHandler.ACTION, VoidStreamable.INSTANCE, new VoidTransportResponseHandler() {
+                    transportService.sendRequest(state.nodes().masterNode(), NodeShutdownRequestHandler.ACTION, VoidStreamable.INSTANCE, new VoidTransportResponseHandler(ThreadPool.Names.SAME) {
                         @Override public void handleResponse(VoidStreamable response) {
                             logger.trace("[cluster_shutdown]: received shutdown response from master");
                         }
@@ -177,7 +182,7 @@ public class TransportNodesShutdownAction extends TransportMasterNodeOperationAc
                         }
 
                         logger.trace("[partial_cluster_shutdown]: sending shutdown request to [{}]", node);
-                        transportService.sendRequest(node, NodeShutdownRequestHandler.ACTION, VoidStreamable.INSTANCE, new VoidTransportResponseHandler() {
+                        transportService.sendRequest(node, NodeShutdownRequestHandler.ACTION, VoidStreamable.INSTANCE, new VoidTransportResponseHandler(ThreadPool.Names.SAME) {
                             @Override public void handleResponse(VoidStreamable response) {
                                 logger.trace("[partial_cluster_shutdown]: received shutdown response from [{}]", node);
                                 latch.countDown();
@@ -210,6 +215,10 @@ public class TransportNodesShutdownAction extends TransportMasterNodeOperationAc
 
         @Override public VoidStreamable newInstance() {
             return VoidStreamable.INSTANCE;
+        }
+
+        @Override public String executor() {
+            return ThreadPool.Names.SAME;
         }
 
         @Override public void messageReceived(VoidStreamable request, TransportChannel channel) throws Exception {

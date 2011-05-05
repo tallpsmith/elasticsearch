@@ -25,7 +25,7 @@ import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentBuilderString;
 import org.elasticsearch.search.facet.Facet;
-import org.elasticsearch.search.facet.internal.InternalFacet;
+import org.elasticsearch.search.facet.InternalFacet;
 
 import java.io.IOException;
 import java.util.Iterator;
@@ -36,21 +36,31 @@ import java.util.List;
  */
 public class InternalRangeFacet implements RangeFacet, InternalFacet {
 
+    private static final String STREAM_TYPE = "range";
+
+    public static void registerStreams() {
+        Streams.registerStream(STREAM, STREAM_TYPE);
+    }
+
+    static Stream STREAM = new Stream() {
+        @Override public Facet readFacet(String type, StreamInput in) throws IOException {
+            return readRangeFacet(in);
+        }
+    };
+
+    @Override public String streamType() {
+        return STREAM_TYPE;
+    }
+
     private String name;
 
-    private String keyFieldName;
-
-    private String valueFieldName;
-
-    private Entry[] entries;
+    Entry[] entries;
 
     InternalRangeFacet() {
     }
 
-    public InternalRangeFacet(String name, String keyFieldName, String valueFieldName, Entry[] entries) {
+    public InternalRangeFacet(String name, Entry[] entries) {
         this.name = name;
-        this.keyFieldName = keyFieldName;
-        this.valueFieldName = valueFieldName;
         this.entries = entries;
     }
 
@@ -62,28 +72,12 @@ public class InternalRangeFacet implements RangeFacet, InternalFacet {
         return name();
     }
 
-    @Override public Type type() {
-        return Type.RANGE;
+    @Override public String type() {
+        return RangeFacet.TYPE;
     }
 
-    @Override public Type getType() {
-        return type();
-    }
-
-    @Override public String keyFieldName() {
-        return this.keyFieldName;
-    }
-
-    @Override public String getKeyFieldName() {
-        return keyFieldName();
-    }
-
-    @Override public String valueFieldName() {
-        return this.valueFieldName;
-    }
-
-    @Override public String getValueFieldName() {
-        return valueFieldName();
+    @Override public String getType() {
+        return RangeFacet.TYPE;
     }
 
     @Override public List<Entry> entries() {
@@ -98,25 +92,6 @@ public class InternalRangeFacet implements RangeFacet, InternalFacet {
         return entries().iterator();
     }
 
-    @Override public Facet aggregate(Iterable<Facet> facets) {
-        InternalRangeFacet agg = null;
-        for (Facet facet : facets) {
-            if (!facet.name().equals(name)) {
-                continue;
-            }
-            InternalRangeFacet geoDistanceFacet = (InternalRangeFacet) facet;
-            if (agg == null) {
-                agg = geoDistanceFacet;
-            } else {
-                for (int i = 0; i < geoDistanceFacet.entries.length; i++) {
-                    agg.entries[i].count += geoDistanceFacet.entries[i].count;
-                    agg.entries[i].total += geoDistanceFacet.entries[i].total;
-                }
-            }
-        }
-        return agg;
-    }
-
     public static InternalRangeFacet readRangeFacet(StreamInput in) throws IOException {
         InternalRangeFacet facet = new InternalRangeFacet();
         facet.readFrom(in);
@@ -125,8 +100,6 @@ public class InternalRangeFacet implements RangeFacet, InternalFacet {
 
     @Override public void readFrom(StreamInput in) throws IOException {
         name = in.readUTF();
-        keyFieldName = in.readUTF();
-        valueFieldName = in.readUTF();
         entries = new Entry[in.readVInt()];
         for (int i = 0; i < entries.length; i++) {
             Entry entry = new Entry();
@@ -139,15 +112,16 @@ public class InternalRangeFacet implements RangeFacet, InternalFacet {
                 entry.toAsString = in.readUTF();
             }
             entry.count = in.readVLong();
+            entry.totalCount = in.readVLong();
             entry.total = in.readDouble();
+            entry.min = in.readDouble();
+            entry.max = in.readDouble();
             entries[i] = entry;
         }
     }
 
     @Override public void writeTo(StreamOutput out) throws IOException {
         out.writeUTF(name);
-        out.writeUTF(keyFieldName);
-        out.writeUTF(valueFieldName);
         out.writeVInt(entries.length);
         for (Entry entry : entries) {
             out.writeDouble(entry.from);
@@ -165,14 +139,15 @@ public class InternalRangeFacet implements RangeFacet, InternalFacet {
                 out.writeUTF(entry.toAsString);
             }
             out.writeVLong(entry.count);
+            out.writeVLong(entry.totalCount);
             out.writeDouble(entry.total);
+            out.writeDouble(entry.min);
+            out.writeDouble(entry.max);
         }
     }
 
     static final class Fields {
         static final XContentBuilderString _TYPE = new XContentBuilderString("_type");
-        static final XContentBuilderString _KEY_FIELD = new XContentBuilderString("_key_field");
-        static final XContentBuilderString _VALUE_FIELD = new XContentBuilderString("_value_field");
         static final XContentBuilderString RANGES = new XContentBuilderString("ranges");
         static final XContentBuilderString FROM = new XContentBuilderString("from");
         static final XContentBuilderString FROM_STR = new XContentBuilderString("from_str");
@@ -180,14 +155,15 @@ public class InternalRangeFacet implements RangeFacet, InternalFacet {
         static final XContentBuilderString TO_STR = new XContentBuilderString("to_str");
         static final XContentBuilderString COUNT = new XContentBuilderString("count");
         static final XContentBuilderString TOTAL = new XContentBuilderString("total");
+        static final XContentBuilderString TOTAL_COUNT = new XContentBuilderString("total_count");
         static final XContentBuilderString MEAN = new XContentBuilderString("mean");
+        static final XContentBuilderString MIN = new XContentBuilderString("min");
+        static final XContentBuilderString MAX = new XContentBuilderString("max");
     }
 
-    @Override public void toXContent(XContentBuilder builder, Params params) throws IOException {
+    @Override public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject(name);
         builder.field(Fields._TYPE, "range");
-        builder.field(Fields._KEY_FIELD, keyFieldName);
-        builder.field(Fields._VALUE_FIELD, valueFieldName);
         builder.startArray(Fields.RANGES);
         for (Entry entry : entries) {
             builder.startObject();
@@ -204,11 +180,15 @@ public class InternalRangeFacet implements RangeFacet, InternalFacet {
                 builder.field(Fields.TO_STR, entry.toAsString);
             }
             builder.field(Fields.COUNT, entry.count());
+            builder.field(Fields.MIN, entry.min());
+            builder.field(Fields.MAX, entry.max());
+            builder.field(Fields.TOTAL_COUNT, entry.totalCount());
             builder.field(Fields.TOTAL, entry.total());
             builder.field(Fields.MEAN, entry.mean());
             builder.endObject();
         }
         builder.endArray();
         builder.endObject();
+        return builder;
     }
 }

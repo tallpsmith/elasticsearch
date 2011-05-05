@@ -43,6 +43,15 @@ public abstract class QueryBuilders {
     }
 
     /**
+     * Constructs a query that will match only specific ids within a type.
+     *
+     * @param type The mapping/doc type
+     */
+    public static IdsQueryBuilder idsQuery(String type) {
+        return new IdsQueryBuilder(type);
+    }
+
+    /**
      * A Query that matches documents containing a term.
      *
      * @param name  The name of the field
@@ -250,6 +259,15 @@ public abstract class QueryBuilders {
      */
     public static QueryStringQueryBuilder queryString(String queryString) {
         return new QueryStringQueryBuilder(queryString);
+    }
+
+    /**
+     * The BoostingQuery class can be used to effectively demote results that match a given query.
+     * Unlike the "NOT" clause, this still selects documents that contain undesirable terms,
+     * but reduces their overall score:
+     */
+    public static BoostingQueryBuilder boostingQuery() {
+        return new BoostingQueryBuilder();
     }
 
     /**

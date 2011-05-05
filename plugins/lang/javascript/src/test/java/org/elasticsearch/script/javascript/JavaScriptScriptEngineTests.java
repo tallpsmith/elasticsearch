@@ -23,7 +23,8 @@ import org.elasticsearch.common.collect.Lists;
 import org.elasticsearch.common.collect.MapBuilder;
 import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.script.ExecutableScript;
-import org.testng.annotations.BeforeTest;
+import org.testng.annotations.AfterClass;
+import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
 import java.util.HashMap;
@@ -39,8 +40,12 @@ public class JavaScriptScriptEngineTests {
 
     private JavaScriptScriptEngineService se;
 
-    @BeforeTest public void setup() {
+    @BeforeClass public void setup() {
         se = new JavaScriptScriptEngineService(ImmutableSettings.Builder.EMPTY_SETTINGS);
+    }
+
+    @AfterClass public void close() {
+        se.close();
     }
 
     @Test public void testSimpleEquation() {
@@ -128,16 +133,15 @@ public class JavaScriptScriptEngineTests {
 
     @Test public void testChangingVarsCrossExecution2() {
         Map<String, Object> vars = new HashMap<String, Object>();
-        Map<String, Object> ctx = new HashMap<String, Object>();
         Object compiledScript = se.compile("value");
 
         ExecutableScript script = se.executable(compiledScript, vars);
-        ctx.put("value", 1);
-        Object o = script.run(ctx);
+        script.setNextVar("value", 1);
+        Object o = script.run();
         assertThat(((Number) o).intValue(), equalTo(1));
 
-        ctx.put("value", 2);
-        o = script.run(ctx);
+        script.setNextVar("value", 2);
+        o = script.run();
         assertThat(((Number) o).intValue(), equalTo(2));
     }
 }

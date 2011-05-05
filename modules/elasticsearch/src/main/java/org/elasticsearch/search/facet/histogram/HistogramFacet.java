@@ -33,51 +33,57 @@ import java.util.List;
 public interface HistogramFacet extends Facet, Iterable<HistogramFacet.Entry> {
 
     /**
-     * The key field name used with this facet.
+     * The type of the filter facet.
      */
-    String keyFieldName();
-
-    /**
-     * The key field name used with this facet.
-     */
-    String getKeyFieldName();
-
-    /**
-     * The value field name used with this facet.
-     */
-    String valueFieldName();
-
-    /**
-     * The value field name used with this facet.
-     */
-    String getValueFieldName();
+    public static final String TYPE = "histogram";
 
     /**
      * An ordered list of histogram facet entries.
      */
-    List<Entry> entries();
+    List<? extends Entry> entries();
 
     /**
      * An ordered list of histogram facet entries.
      */
-    List<Entry> getEntries();
+    List<? extends Entry> getEntries();
 
     public static enum ComparatorType {
         KEY((byte) 0, "key", new Comparator<Entry>() {
 
             @Override public int compare(Entry o1, Entry o2) {
+                // push nulls to the end
+                if (o1 == null) {
+                    return 1;
+                }
+                if (o2 == null) {
+                    return -1;
+                }
                 return (o1.key() < o2.key() ? -1 : (o1.key() == o2.key() ? 0 : 1));
             }
         }),
         COUNT((byte) 1, "count", new Comparator<Entry>() {
 
             @Override public int compare(Entry o1, Entry o2) {
+                // push nulls to the end
+                if (o1 == null) {
+                    return 1;
+                }
+                if (o2 == null) {
+                    return -1;
+                }
                 return (o1.count() < o2.count() ? -1 : (o1.count() == o2.count() ? 0 : 1));
             }
         }),
         TOTAL((byte) 2, "total", new Comparator<Entry>() {
 
             @Override public int compare(Entry o1, Entry o2) {
+                // push nulls to the end
+                if (o1 == null) {
+                    return 1;
+                }
+                if (o2 == null) {
+                    return -1;
+                }
                 return (o1.total() < o2.total() ? -1 : (o1.total() == o2.total() ? 0 : 1));
             }
         });
@@ -129,75 +135,76 @@ public interface HistogramFacet extends Facet, Iterable<HistogramFacet.Entry> {
         }
     }
 
-
-    /**
-     * A histogram entry representing a single entry within the result of a histogram facet.
-     */
-    public class Entry {
-        private final long key;
-        private final long count;
-        private final double total;
-
-        public Entry(long key, long count, double total) {
-            this.key = key;
-            this.count = count;
-            this.total = total;
-        }
+    public interface Entry {
 
         /**
          * The key value of the histogram.
          */
-        public long key() {
-            return key;
-        }
+        long key();
 
         /**
          * The key value of the histogram.
          */
-        public long getKey() {
-            return key();
-        }
+        long getKey();
 
         /**
          * The number of hits that fall within that key "range" or "interval".
          */
-        public long count() {
-            return count;
-        }
+        long count();
 
         /**
          * The number of hits that fall within that key "range" or "interval".
          */
-        public long getCount() {
-            return count();
-        }
+        long getCount();
+
+        /**
+         * The total count of values aggregated to compute the total.
+         */
+        long totalCount();
+
+        /**
+         * The total count of values aggregated to compute the total.
+         */
+        long getTotalCount();
 
         /**
          * The sum / total of the value field that fall within this key "interval".
          */
-        public double total() {
-            return total;
-        }
+        double total();
 
         /**
          * The sum / total of the value field that fall within this key "interval".
          */
-        public double getTotal() {
-            return total();
-        }
+        double getTotal();
 
         /**
          * The mean of this facet interval.
          */
-        public double mean() {
-            return total / count;
-        }
+        double mean();
 
         /**
          * The mean of this facet interval.
          */
-        public double getMean() {
-            return mean();
-        }
+        double getMean();
+
+        /**
+         * The minimum value.
+         */
+        double min();
+
+        /**
+         * The minimum value.
+         */
+        double getMin();
+
+        /**
+         * The maximum value.
+         */
+        double max();
+
+        /**
+         * The maximum value.
+         */
+        double getMax();
     }
 }

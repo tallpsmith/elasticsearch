@@ -21,6 +21,8 @@ package org.elasticsearch.action.admin.indices.status;
 
 import org.elasticsearch.common.collect.Iterators;
 import org.elasticsearch.common.unit.ByteSizeValue;
+import org.elasticsearch.index.merge.MergeStats;
+import org.elasticsearch.index.refresh.RefreshStats;
 import org.elasticsearch.index.shard.ShardId;
 
 import java.util.Iterator;
@@ -59,6 +61,39 @@ public class IndexShardStatus implements Iterable<ShardStatus> {
         return shards[position];
     }
 
+    /**
+     * Returns only the primary shards store size in bytes.
+     */
+    public ByteSizeValue primaryStoreSize() {
+        long bytes = -1;
+        for (ShardStatus shard : shards()) {
+            if (!shard.shardRouting().primary()) {
+                // only sum docs for the primaries
+                continue;
+            }
+            if (shard.storeSize() != null) {
+                if (bytes == -1) {
+                    bytes = 0;
+                }
+                bytes += shard.storeSize().bytes();
+            }
+        }
+        if (bytes == -1) {
+            return null;
+        }
+        return new ByteSizeValue(bytes);
+    }
+
+    /**
+     * Returns only the primary shards store size in bytes.
+     */
+    public ByteSizeValue getPrimaryStoreSize() {
+        return primaryStoreSize();
+    }
+
+    /**
+     * Returns the full store size in bytes, of both primaries and replicas.
+     */
     public ByteSizeValue storeSize() {
         long bytes = -1;
         for (ShardStatus shard : shards()) {
@@ -75,6 +110,9 @@ public class IndexShardStatus implements Iterable<ShardStatus> {
         return new ByteSizeValue(bytes);
     }
 
+    /**
+     * Returns the full store size in bytes, of both primaries and replicas.
+     */
     public ByteSizeValue getStoreSize() {
         return storeSize();
     }
@@ -124,6 +162,36 @@ public class IndexShardStatus implements Iterable<ShardStatus> {
 
     public DocsStatus getDocs() {
         return docs();
+    }
+
+    /**
+     * Total merges of this shard replication group.
+     */
+    public MergeStats mergeStats() {
+        MergeStats mergeStats = new MergeStats();
+        for (ShardStatus shard : shards) {
+            mergeStats.add(shard.mergeStats());
+        }
+        return mergeStats;
+    }
+
+    /**
+     * Total merges of this shard replication group.
+     */
+    public MergeStats getMergeStats() {
+        return this.mergeStats();
+    }
+
+    public RefreshStats refreshStats() {
+        RefreshStats refreshStats = new RefreshStats();
+        for (ShardStatus shard : shards) {
+            refreshStats.add(shard.refreshStats());
+        }
+        return refreshStats;
+    }
+
+    public RefreshStats getRefreshStats() {
+        return refreshStats();
     }
 
     @Override public Iterator<ShardStatus> iterator() {

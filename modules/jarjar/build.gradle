@@ -4,22 +4,25 @@ archivesBaseName = "$project.archivesBaseName"
 
 dependencies {
     runtime 'aopalliance:aopalliance:1.0'
+    // We are still using Guice 2 since it uses much less memory compared to 3
     runtime 'com.google.inject:guice:2.0'
     runtime 'com.google.inject.extensions:guice-assisted-inject:2.0'
     runtime 'com.google.inject.extensions:guice-multibindings:2.0'
 
-    runtime 'com.google.guava:guava:r07'
-    runtime 'org.elasticsearch:es-trove:2.1.0'
-    runtime 'org.elasticsearch:es-jsr166y:20100615'
+    runtime 'com.google.guava:guava:r08'
+    runtime 'org.elasticsearch:es-trove:3.0.0rc1'
+    runtime 'org.elasticsearch:es-jsr166y:20110209'
+
+    runtime 'commons-codec:commons-codec:1.4'
 
     runtime 'joda-time:joda-time:1.6.1'
-    runtime 'org.mvel:mvel2:2.0.19'
+    runtime 'org.mvel:mvel2:2.1.beta2'
 
-    runtime 'org.codehaus.jackson:jackson-core-asl:1.6.3'
-    runtime 'org.codehaus.jackson:jackson-smile:1.6.3'
+    runtime 'org.codehaus.jackson:jackson-core-asl:1.8.0'
+    runtime 'org.codehaus.jackson:jackson-smile:1.8.0'
     runtime 'org.yaml:snakeyaml:1.6'
 
-    runtime('org.jboss.netty:netty:3.2.3.Final') { transitive = false }
+    runtime('org.jboss.netty:netty:3.2.4.Final') { transitive = false }
 }
 
 configurations {
@@ -37,7 +40,7 @@ jar << {
         jarjar(jarfile: jarjarArchivePath) {
             zipfileset(src: jar.archivePath)
             configurations.runtime.files.findAll {file ->
-                ['mvel', 'jackson', 'joda', 'snakeyaml', 'netty', 'guice', 'aopalliance', 'guava', 'trove', 'jsr166y'].any { file.name.contains(it) }
+                ['inject', 'codec', 'mvel', 'jackson', 'joda', 'snakeyaml', 'netty', 'guice', 'javax.inject', 'aopalliance', 'guava', 'trove', 'jsr166y'].any { file.name.contains(it) }
             }.each { jarjarFile ->
                 zipfileset(src: jarjarFile) {
                     exclude(name: "META-INF/**")
@@ -48,7 +51,10 @@ jar << {
             rule pattern: "jsr166y.**", result: "org.elasticsearch.common.util.concurrent.jsr166y.@1"
 
             rule pattern: "org.aopalliance.**", result: "org.elasticsearch.common.aopalliance.@1"
+            rule pattern: "javax.inject.**", result: "org.elasticsearch.common.inject.jex.@1"
             rule pattern: "com.google.inject.**", result: "org.elasticsearch.common.inject.@1"
+
+            rule pattern: "org.apache.commons.codec.**", result: "org.elasticsearch.common.codec.@1"
 
             rule pattern: "org.mvel2.**", result: "org.elasticsearch.common.mvel2.@1"
 

@@ -24,6 +24,7 @@ import org.elasticsearch.action.TransportActions;
 import org.elasticsearch.action.support.master.TransportMasterNodeOperationAction;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.ClusterState;
+import org.elasticsearch.cluster.block.ClusterBlockException;
 import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.cluster.metadata.MetaDataCreateIndexService;
 import org.elasticsearch.common.inject.Inject;
@@ -49,6 +50,10 @@ public class TransportCreateIndexAction extends TransportMasterNodeOperationActi
         this.createIndexService = createIndexService;
     }
 
+    @Override protected String executor() {
+        return ThreadPool.Names.CACHED;
+    }
+
     @Override protected String transportAction() {
         return TransportActions.Admin.Indices.CREATE;
     }
@@ -61,8 +66,8 @@ public class TransportCreateIndexAction extends TransportMasterNodeOperationActi
         return new CreateIndexResponse();
     }
 
-    @Override protected void checkBlock(CreateIndexRequest request, ClusterState state) {
-        state.blocks().indexBlockedRaiseException(ClusterBlockLevel.METADATA, request.index());
+    @Override protected ClusterBlockException checkBlock(CreateIndexRequest request, ClusterState state) {
+        return state.blocks().indexBlockedException(ClusterBlockLevel.METADATA, request.index());
     }
 
     @Override protected CreateIndexResponse masterOperation(CreateIndexRequest request, ClusterState state) throws ElasticSearchException {
@@ -74,7 +79,7 @@ public class TransportCreateIndexAction extends TransportMasterNodeOperationActi
         final AtomicReference<CreateIndexResponse> responseRef = new AtomicReference<CreateIndexResponse>();
         final AtomicReference<Throwable> failureRef = new AtomicReference<Throwable>();
         final CountDownLatch latch = new CountDownLatch(1);
-        createIndexService.createIndex(new MetaDataCreateIndexService.Request(MetaDataCreateIndexService.Request.Origin.API, cause, request.index()).settings(request.settings()).mappings(request.mappings()).timeout(request.timeout()), new MetaDataCreateIndexService.Listener() {
+        createIndexService.createIndex(new MetaDataCreateIndexService.Request(cause, request.index()).settings(request.settings()).mappings(request.mappings()).timeout(request.timeout()), new MetaDataCreateIndexService.Listener() {
             @Override public void onResponse(MetaDataCreateIndexService.Response response) {
                 responseRef.set(new CreateIndexResponse(response.acknowledged()));
                 latch.countDown();

@@ -23,7 +23,7 @@ import org.elasticsearch.common.collect.Iterators;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.thread.ThreadLocals;
-import org.elasticsearch.common.trove.TIntObjectHashMap;
+import org.elasticsearch.common.trove.map.hash.TIntObjectHashMap;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentBuilderString;
 import org.elasticsearch.search.SearchHit;
@@ -91,11 +91,11 @@ public class InternalSearchHits implements SearchHits {
     }
 
 
-    private static final InternalSearchHit[] EMPTY = new InternalSearchHit[0];
+    public static final InternalSearchHit[] EMPTY = new InternalSearchHit[0];
 
     private InternalSearchHit[] hits;
 
-    private long totalHits;
+    public long totalHits;
 
     private float maxScore;
 
@@ -157,7 +157,7 @@ public class InternalSearchHits implements SearchHits {
         static final XContentBuilderString MAX_SCORE = new XContentBuilderString("max_score");
     }
 
-    @Override public void toXContent(XContentBuilder builder, Params params) throws IOException {
+    @Override public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject(Fields.HITS);
         builder.field(Fields.TOTAL, totalHits);
         if (Float.isNaN(maxScore)) {
@@ -172,6 +172,7 @@ public class InternalSearchHits implements SearchHits {
         }
         builder.endArray();
         builder.endObject();
+        return builder;
     }
 
     public static InternalSearchHits readSearchHits(StreamInput in, StreamContext context) throws IOException {

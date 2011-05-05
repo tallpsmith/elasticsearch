@@ -22,7 +22,8 @@ package org.elasticsearch.index.field.function.sort;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.search.FieldComparator;
 import org.apache.lucene.search.FieldComparatorSource;
-import org.elasticsearch.script.search.SearchScript;
+import org.apache.lucene.search.Scorer;
+import org.elasticsearch.script.SearchScript;
 
 import java.io.IOException;
 
@@ -63,6 +64,10 @@ public class DoubleFieldsFunctionDataComparator extends FieldComparator {
         script.setNextReader(reader);
     }
 
+    @Override public void setScorer(Scorer scorer) {
+        script.setScorer(scorer);
+    }
+
     @Override public int compare(int slot1, int slot2) {
         final double v1 = values[slot1];
         final double v2 = values[slot2];
@@ -76,7 +81,8 @@ public class DoubleFieldsFunctionDataComparator extends FieldComparator {
     }
 
     @Override public int compareBottom(int doc) {
-        final double v2 = ((Number) script.execute(doc)).doubleValue();
+        script.setNextDocId(doc);
+        final double v2 = script.runAsDouble();
         if (bottom > v2) {
             return 1;
         } else if (bottom < v2) {
@@ -87,7 +93,8 @@ public class DoubleFieldsFunctionDataComparator extends FieldComparator {
     }
 
     @Override public void copy(int slot, int doc) {
-        values[slot] = ((Number) script.execute(doc)).doubleValue();
+        script.setNextDocId(doc);
+        values[slot] = script.runAsDouble();
     }
 
     @Override public void setBottom(final int bottom) {

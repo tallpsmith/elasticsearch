@@ -21,6 +21,7 @@ package org.elasticsearch.index.shard.recovery;
 
 import org.apache.lucene.store.IndexOutput;
 import org.elasticsearch.ExceptionsHelper;
+import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.StopWatch;
 import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.inject.Inject;
@@ -42,8 +43,8 @@ import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.*;
 
-import javax.annotation.Nullable;
 import java.io.IOException;
+import java.util.Collections;
 import java.util.Map;
 import java.util.concurrent.ConcurrentMap;
 
@@ -111,24 +112,24 @@ public class RecoveryTarget extends AbstractComponent {
 
     public void startRecovery(final StartRecoveryRequest request, final boolean fromRetry, final RecoveryListener listener) {
         if (request.sourceNode() == null) {
-            listener.onIgnoreRecovery(false, "No node to recovery from, retry on next cluster state update");
+            listener.onIgnoreRecovery(false, "No node to recover from, retry on next cluster state update");
             return;
         }
         IndexService indexService = indicesService.indexService(request.shardId().index().name());
         if (indexService == null) {
             removeAndCleanOnGoingRecovery(request.shardId());
-            listener.onIgnoreRecovery(false, "index missing, stop recovery");
+            listener.onIgnoreRecovery(false, "index missing locally, stop recovery");
             return;
         }
         final InternalIndexShard shard = (InternalIndexShard) indexService.shard(request.shardId().id());
         if (shard == null) {
             removeAndCleanOnGoingRecovery(request.shardId());
-            listener.onIgnoreRecovery(false, "shard missing, stop recovery");
+            listener.onIgnoreRecovery(false, "shard missing locally, stop recovery");
             return;
         }
         if (!fromRetry) {
             try {
-                shard.recovering();
+                shard.recovering("from " + request.sourceNode());
             } catch (IllegalIndexShardStateException e) {
                 // that's fine, since we might be called concurrently, just ignore this, we are already recovering
                 listener.onIgnoreRecovery(false, "already in recovering process, " + e.getMessage());
@@ -137,7 +138,7 @@ public class RecoveryTarget extends AbstractComponent {
         }
         if (shard.state() == IndexShardState.CLOSED) {
             removeAndCleanOnGoingRecovery(request.shardId());
-            listener.onIgnoreRecovery(false, "shard closed, stop recovery");
+            listener.onIgnoreRecovery(false, "local shard closed, stop recovery");
             return;
         }
         threadPool.cached().execute(new Runnable() {
@@ -150,7 +151,7 @@ public class RecoveryTarget extends AbstractComponent {
     private void doRecovery(final InternalIndexShard shard, final StartRecoveryRequest request, final boolean fromRetry, final RecoveryListener listener) {
         if (shard.state() == IndexShardState.CLOSED) {
             removeAndCleanOnGoingRecovery(request.shardId());
-            listener.onIgnoreRecovery(false, "shard closed, stop recovery");
+            listener.onIgnoreRecovery(false, "local shard closed, stop recovery");
             return;
         }
 
@@ -172,7 +173,8 @@ public class RecoveryTarget extends AbstractComponent {
                 }
             }).txGet();
             if (shard.state() == IndexShardState.CLOSED) {
-                listener.onIgnoreRecovery(false, "shard closed, stop recovery");
+                removeAndCleanOnGoingRecovery(shard.shardId());
+                listener.onIgnoreRecovery(false, "local shard closed, stop recovery");
                 return;
             }
             stopWatch.stop();
@@ -197,7 +199,7 @@ public class RecoveryTarget extends AbstractComponent {
 //            logger.trace("[{}][{}] Got exception on recovery", e, request.shardId().index().name(), request.shardId().id());
             if (shard.state() == IndexShardState.CLOSED) {
                 removeAndCleanOnGoingRecovery(request.shardId());
-                listener.onIgnoreRecovery(false, "shard closed, stop recovery");
+                listener.onIgnoreRecovery(false, "local shard closed, stop recovery");
                 return;
             }
             Throwable cause = ExceptionsHelper.unwrapCause(e);
@@ -215,7 +217,7 @@ public class RecoveryTarget extends AbstractComponent {
             // here, we would add checks against exception that need to be retried (and not removeAndClean in this case)
 
             if (cause instanceof IndexShardNotStartedException || cause instanceof IndexMissingException || cause instanceof IndexShardMissingException) {
-                // no need to retry here, since we only get to try and recover when there is an existing shard on the other side
+                // if the target is not ready yet, retry
                 listener.onRetryRecovery(TimeValue.timeValueMillis(500));
                 return;
             }
@@ -228,12 +230,12 @@ public class RecoveryTarget extends AbstractComponent {
             removeAndCleanOnGoingRecovery(request.shardId());
 
             if (cause instanceof ConnectTransportException) {
-                listener.onIgnoreRecovery(true, "source node disconnected");
+                listener.onIgnoreRecovery(true, "source node disconnected (" + request.sourceNode() + ")");
                 return;
             }
 
             if (cause instanceof IndexShardClosedException) {
-                listener.onIgnoreRecovery(true, "source shard is closed");
+                listener.onIgnoreRecovery(true, "source shard is closed (" + request.sourceNode() + ")");
                 return;
             }
 
@@ -277,6 +279,10 @@ public class RecoveryTarget extends AbstractComponent {
             return new RecoveryPrepareForTranslogOperationsRequest();
         }
 
+        @Override public String executor() {
+            return ThreadPool.Names.CACHED;
+        }
+
         @Override public void messageReceived(RecoveryPrepareForTranslogOperationsRequest request, TransportChannel channel) throws Exception {
             InternalIndexShard shard = (InternalIndexShard) indicesService.indexServiceSafe(request.shardId().index().name()).shardSafe(request.shardId().id());
 
@@ -296,6 +302,10 @@ public class RecoveryTarget extends AbstractComponent {
 
         @Override public RecoveryFinalizeRecoveryRequest newInstance() {
             return new RecoveryFinalizeRecoveryRequest();
+        }
+
+        @Override public String executor() {
+            return ThreadPool.Names.CACHED;
         }
 
         @Override public void messageReceived(RecoveryFinalizeRecoveryRequest request, TransportChannel channel) throws Exception {
@@ -320,6 +330,10 @@ public class RecoveryTarget extends AbstractComponent {
             return new RecoveryTranslogOperationsRequest();
         }
 
+        @Override public String executor() {
+            return ThreadPool.Names.CACHED;
+        }
+
         @Override public void messageReceived(RecoveryTranslogOperationsRequest request, TransportChannel channel) throws Exception {
             InternalIndexShard shard = (InternalIndexShard) indicesService.indexServiceSafe(request.shardId().index().name()).shardSafe(request.shardId().id());
             for (Translog.Operation operation : request.operations()) {
@@ -341,6 +355,10 @@ public class RecoveryTarget extends AbstractComponent {
 
         @Override public RecoveryFilesInfoRequest newInstance() {
             return new RecoveryFilesInfoRequest();
+        }
+
+        @Override public String executor() {
+            return ThreadPool.Names.CACHED;
         }
 
         @Override public void messageReceived(RecoveryFilesInfoRequest request, TransportChannel channel) throws Exception {
@@ -367,6 +385,10 @@ public class RecoveryTarget extends AbstractComponent {
             return new RecoveryCleanFilesRequest();
         }
 
+        @Override public String executor() {
+            return ThreadPool.Names.CACHED;
+        }
+
         @Override public void messageReceived(RecoveryCleanFilesRequest request, TransportChannel channel) throws Exception {
             InternalIndexShard shard = (InternalIndexShard) indicesService.indexServiceSafe(request.shardId().index().name()).shardSafe(request.shardId().id());
             for (String existingFile : shard.store().directory().listAll()) {
@@ -387,6 +409,10 @@ public class RecoveryTarget extends AbstractComponent {
 
         @Override public RecoveryFileChunkRequest newInstance() {
             return new RecoveryFileChunkRequest();
+        }
+
+        @Override public String executor() {
+            return ThreadPool.Names.CACHED;
         }
 
         @Override public void messageReceived(final RecoveryFileChunkRequest request, TransportChannel channel) throws Exception {
@@ -429,7 +455,7 @@ public class RecoveryTarget extends AbstractComponent {
                         if (request.checksum() != null) {
                             shard.store().writeChecksum(request.name(), request.checksum());
                         }
-                        shard.store().directory().sync(request.name());
+                        shard.store().directory().sync(Collections.singleton(request.name()));
                         onGoingRecovery.openIndexOutputs.remove(request.name());
                     }
                 } catch (IOException e) {

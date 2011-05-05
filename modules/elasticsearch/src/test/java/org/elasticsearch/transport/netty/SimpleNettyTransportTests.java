@@ -20,7 +20,9 @@
 package org.elasticsearch.transport.netty;
 
 import org.elasticsearch.cluster.node.DiscoveryNode;
+import org.elasticsearch.common.transport.InetSocketTransportAddress;
 import org.elasticsearch.transport.AbstractSimpleTransportTests;
+import org.elasticsearch.transport.ConnectTransportException;
 import org.elasticsearch.transport.TransportService;
 import org.testng.annotations.Test;
 
@@ -30,10 +32,24 @@ import static org.elasticsearch.common.settings.ImmutableSettings.*;
 public class SimpleNettyTransportTests extends AbstractSimpleTransportTests {
 
     @Override protected void build() {
-        serviceA = new TransportService(settingsBuilder().put("name", "A").build(), new NettyTransport(settingsBuilder().put("name", "A").build(), threadPool), threadPool, timerService).start();
+        serviceA = new TransportService(settingsBuilder().put("name", "A").build(), new NettyTransport(settingsBuilder().put("name", "A").build(), threadPool), threadPool).start();
         serviceANode = new DiscoveryNode("A", serviceA.boundAddress().publishAddress());
 
-        serviceB = new TransportService(settingsBuilder().put("name", "B").build(), new NettyTransport(settingsBuilder().put("name", "B").build(), threadPool), threadPool, timerService).start();
+        serviceB = new TransportService(settingsBuilder().put("name", "B").build(), new NettyTransport(settingsBuilder().put("name", "B").build(), threadPool), threadPool).start();
         serviceBNode = new DiscoveryNode("B", serviceB.boundAddress().publishAddress());
+    }
+
+    @Override public void testVoidMessageCompressed() {
+        super.testVoidMessageCompressed();    //To change body of overridden methods use File | Settings | File Templates.
+    }
+
+    @Test public void testConnectException() {
+        try {
+            serviceA.connectToNode(new DiscoveryNode("C", new InetSocketTransportAddress("localhost", 9876)));
+            assert false;
+        } catch (ConnectTransportException e) {
+//            e.printStackTrace();
+            // all is well
+        }
     }
 }

@@ -21,7 +21,9 @@ package org.elasticsearch.search;
 
 import org.apache.lucene.search.TopDocs;
 import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.action.search.SearchType;
 import org.elasticsearch.cluster.ClusterService;
+import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Unicode;
 import org.elasticsearch.common.collect.ImmutableMap;
 import org.elasticsearch.common.component.AbstractLifecycleComponent;
@@ -49,9 +51,7 @@ import org.elasticsearch.search.internal.InternalSearchRequest;
 import org.elasticsearch.search.internal.SearchContext;
 import org.elasticsearch.search.query.*;
 import org.elasticsearch.threadpool.ThreadPool;
-import org.elasticsearch.timer.TimerService;
 
-import javax.annotation.Nullable;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
@@ -65,11 +65,11 @@ import static org.elasticsearch.common.unit.TimeValue.*;
  */
 public class SearchService extends AbstractLifecycleComponent<SearchService> {
 
+    private final ThreadPool threadPool;
+
     private final ClusterService clusterService;
 
     private final IndicesService indicesService;
-
-    private final TimerService timerService;
 
     private final ScriptService scriptService;
 
@@ -93,12 +93,12 @@ public class SearchService extends AbstractLifecycleComponent<SearchService> {
 
     private final ImmutableMap<String, SearchParseElement> elementParsers;
 
-    @Inject public SearchService(Settings settings, ClusterService clusterService, IndicesService indicesService, IndicesLifecycle indicesLifecycle, ThreadPool threadPool, TimerService timerService,
+    @Inject public SearchService(Settings settings, ClusterService clusterService, IndicesService indicesService, IndicesLifecycle indicesLifecycle, ThreadPool threadPool,
                                  ScriptService scriptService, DfsPhase dfsPhase, QueryPhase queryPhase, FetchPhase fetchPhase) {
         super(settings);
+        this.threadPool = threadPool;
         this.clusterService = clusterService;
         this.indicesService = indicesService;
-        this.timerService = timerService;
         this.scriptService = scriptService;
         this.dfsPhase = dfsPhase;
         this.queryPhase = queryPhase;
@@ -165,13 +165,66 @@ public class SearchService extends AbstractLifecycleComponent<SearchService> {
         }
     }
 
+    public QuerySearchResult executeScan(InternalSearchRequest request) throws ElasticSearchException {
+        SearchContext context = createContext(request);
+        assert context.searchType() == SearchType.SCAN;
+        context.searchType(SearchType.COUNT); // move to COUNT, and then, when scrolling, move to SCAN
+        activeContexts.put(context.id(), context);
+        assert context.searchType() == SearchType.COUNT;
+        try {
+            if (context.scroll() == null) {
+                throw new ElasticSearchException("Scroll must be provided when scanning...");
+            }
+            contextProcessing(context);
+            queryPhase.execute(context);
+            contextProcessedSuccessfully(context);
+            return context.queryResult();
+        } catch (RuntimeException e) {
+            freeContext(context);
+            throw e;
+        } finally {
+            cleanContext(context);
+        }
+    }
+
+    public ScrollQueryFetchSearchResult executeScan(InternalScrollSearchRequest request) throws ElasticSearchException {
+        SearchContext context = findContext(request.id());
+        contextProcessing(context);
+        try {
+            processScroll(request, context);
+            if (context.searchType() == SearchType.COUNT) {
+                // first scanning, reset the from to 0
+                context.searchType(SearchType.SCAN);
+                context.from(0);
+            }
+            queryPhase.execute(context);
+            shortcutDocIdsToLoadForScanning(context);
+            fetchPhase.execute(context);
+            if (context.scroll() == null || context.fetchResult().hits().hits().length < context.size()) {
+                freeContext(request.id());
+            } else {
+                contextProcessedSuccessfully(context);
+            }
+            return new ScrollQueryFetchSearchResult(new QueryFetchSearchResult(context.queryResult(), context.fetchResult()), context.shardTarget());
+        } catch (RuntimeException e) {
+            freeContext(context);
+            throw e;
+        } finally {
+            cleanContext(context);
+        }
+    }
+
     public QuerySearchResult executeQueryPhase(InternalSearchRequest request) throws ElasticSearchException {
         SearchContext context = createContext(request);
         activeContexts.put(context.id(), context);
         try {
             contextProcessing(context);
             queryPhase.execute(context);
-            contextProcessedSuccessfully(context);
+            if (context.searchType() == SearchType.COUNT) {
+                freeContext(context.id());
+            } else {
+                contextProcessedSuccessfully(context);
+            }
             return context.queryResult();
         } catch (RuntimeException e) {
             freeContext(context);
@@ -327,7 +380,7 @@ public class SearchService extends AbstractLifecycleComponent<SearchService> {
         SearchShardTarget shardTarget = new SearchShardTarget(clusterService.localNode().id(), request.index(), request.shardId());
 
         Engine.Searcher engineSearcher = indexShard.searcher();
-        SearchContext context = new SearchContext(idGenerator.incrementAndGet(), shardTarget, request.numberOfShards(), request.timeout(), request.types(), engineSearcher, indexService, scriptService);
+        SearchContext context = new SearchContext(idGenerator.incrementAndGet(), shardTarget, request.searchType(), request.numberOfShards(), request.timeout(), request.types(), engineSearcher, indexService, scriptService);
         SearchContext.setCurrent(context);
         try {
             context.scroll(request.scroll());
@@ -381,7 +434,7 @@ public class SearchService extends AbstractLifecycleComponent<SearchService> {
     }
 
     private void contextProcessedSuccessfully(SearchContext context) {
-        context.accessed(timerService.estimatedTimeInMillis());
+        context.accessed(threadPool.estimatedTimeInMillis());
     }
 
     private void cleanContext(SearchContext context) {
@@ -393,8 +446,9 @@ public class SearchService extends AbstractLifecycleComponent<SearchService> {
         if (source == null || length == 0) {
             return;
         }
+        XContentParser parser = null;
         try {
-            XContentParser parser = XContentFactory.xContent(source, offset, length).createParser(source, offset, length);
+            parser = XContentFactory.xContent(source, offset, length).createParser(source, offset, length);
             XContentParser.Token token;
             while ((token = parser.nextToken()) != XContentParser.Token.END_OBJECT) {
                 if (token == XContentParser.Token.FIELD_NAME) {
@@ -409,7 +463,6 @@ public class SearchService extends AbstractLifecycleComponent<SearchService> {
                     break;
                 }
             }
-            parser.close();
         } catch (Exception e) {
             String sSource = "_na_";
             try {
@@ -418,11 +471,19 @@ public class SearchService extends AbstractLifecycleComponent<SearchService> {
                 // ignore
             }
             throw new SearchParseException(context, "Failed to parse source [" + sSource + "]", e);
+        } finally {
+            if (parser != null) {
+                parser.close();
+            }
         }
     }
 
     private static final int[] EMPTY_DOC_IDS = new int[0];
 
+    /**
+     * Shortcut ids to load, we load only "from" and up to "size". The phase controller
+     * handles this as well since the result is always size * shards for Q_A_F
+     */
     private void shortcutDocIdsToLoad(SearchContext context) {
         TopDocs topDocs = context.queryResult().topDocs();
         if (topDocs.scoreDocs.length < context.from()) {
@@ -442,6 +503,20 @@ public class SearchService extends AbstractLifecycleComponent<SearchService> {
             counter++;
         }
         context.docIdsToLoad(docIdsToLoad, 0, counter);
+    }
+
+    private void shortcutDocIdsToLoadForScanning(SearchContext context) {
+        TopDocs topDocs = context.queryResult().topDocs();
+        if (topDocs.scoreDocs.length == 0) {
+            // no more docs...
+            context.docIdsToLoad(EMPTY_DOC_IDS, 0, 0);
+            return;
+        }
+        int[] docIdsToLoad = new int[topDocs.scoreDocs.length];
+        for (int i = 0; i < docIdsToLoad.length; i++) {
+            docIdsToLoad[i] = topDocs.scoreDocs[i].doc;
+        }
+        context.docIdsToLoad(docIdsToLoad, 0, docIdsToLoad.length);
     }
 
     private void processScroll(InternalScrollSearchRequest request, SearchContext context) {
@@ -467,11 +542,12 @@ public class SearchService extends AbstractLifecycleComponent<SearchService> {
 
     class Reaper implements Runnable {
         @Override public void run() {
+            long time = threadPool.estimatedTimeInMillis();
             for (SearchContext context : activeContexts.values()) {
                 if (context.lastAccessTime() == -1) { // its being processed or timeout is disabled
                     continue;
                 }
-                if ((timerService.estimatedTimeInMillis() - context.lastAccessTime() > context.keepAlive())) {
+                if ((time - context.lastAccessTime() > context.keepAlive())) {
                     freeContext(context);
                 }
             }

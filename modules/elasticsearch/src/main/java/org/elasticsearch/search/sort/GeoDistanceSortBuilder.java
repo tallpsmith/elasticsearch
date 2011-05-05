@@ -95,13 +95,20 @@ public class GeoDistanceSortBuilder extends SortBuilder {
         return this;
     }
 
-    @Override public void toXContent(XContentBuilder builder, Params params) throws IOException {
+    /**
+     * Not relevant.
+     */
+    @Override public SortBuilder missing(Object missing) {
+        return this;
+    }
+
+    @Override public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject("_geo_distance");
 
         if (geohash != null) {
             builder.field(fieldName, geohash);
         } else {
-            builder.startArray(fieldName).value(lat).value(lon).endArray();
+            builder.startArray(fieldName).value(lon).value(lat).endArray();
         }
 
         if (unit != null) {
@@ -115,5 +122,6 @@ public class GeoDistanceSortBuilder extends SortBuilder {
         }
 
         builder.endObject();
+        return builder;
     }
 }

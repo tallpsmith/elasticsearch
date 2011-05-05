@@ -22,11 +22,10 @@ package org.elasticsearch.search.facet.geodistance;
 import org.elasticsearch.common.collect.ImmutableList;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
-import org.elasticsearch.common.unit.DistanceUnit;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentBuilderString;
 import org.elasticsearch.search.facet.Facet;
-import org.elasticsearch.search.facet.internal.InternalFacet;
+import org.elasticsearch.search.facet.InternalFacet;
 
 import java.io.IOException;
 import java.util.Iterator;
@@ -37,24 +36,31 @@ import java.util.List;
  */
 public class InternalGeoDistanceFacet implements GeoDistanceFacet, InternalFacet {
 
+    private static final String STREAM_TYPE = "geoDistance";
+
+    public static void registerStreams() {
+        Streams.registerStream(STREAM, STREAM_TYPE);
+    }
+
+    static Stream STREAM = new Stream() {
+        @Override public Facet readFacet(String type, StreamInput in) throws IOException {
+            return readGeoDistanceFacet(in);
+        }
+    };
+
+    @Override public String streamType() {
+        return STREAM_TYPE;
+    }
+
     private String name;
 
-    private String fieldName;
-
-    private String valueFieldName;
-
-    private DistanceUnit unit;
-
-    private Entry[] entries;
+    Entry[] entries;
 
     InternalGeoDistanceFacet() {
     }
 
-    public InternalGeoDistanceFacet(String name, String fieldName, String valueFieldName, DistanceUnit unit, Entry[] entries) {
+    public InternalGeoDistanceFacet(String name, Entry[] entries) {
         this.name = name;
-        this.fieldName = fieldName;
-        this.valueFieldName = valueFieldName;
-        this.unit = unit;
         this.entries = entries;
     }
 
@@ -66,36 +72,12 @@ public class InternalGeoDistanceFacet implements GeoDistanceFacet, InternalFacet
         return name();
     }
 
-    @Override public Type type() {
-        return Type.GEO_DISTANCE;
+    @Override public String type() {
+        return TYPE;
     }
 
-    @Override public Type getType() {
+    @Override public String getType() {
         return type();
-    }
-
-    @Override public String fieldName() {
-        return this.fieldName;
-    }
-
-    @Override public String getFieldName() {
-        return fieldName();
-    }
-
-    @Override public String valueFieldName() {
-        return this.valueFieldName;
-    }
-
-    @Override public String getValueFieldName() {
-        return valueFieldName();
-    }
-
-    @Override public DistanceUnit unit() {
-        return this.unit;
-    }
-
-    @Override public DistanceUnit getUnit() {
-        return unit();
     }
 
     @Override public List<Entry> entries() {
@@ -110,25 +92,6 @@ public class InternalGeoDistanceFacet implements GeoDistanceFacet, InternalFacet
         return entries().iterator();
     }
 
-    @Override public Facet aggregate(Iterable<Facet> facets) {
-        InternalGeoDistanceFacet agg = null;
-        for (Facet facet : facets) {
-            if (!facet.name().equals(name)) {
-                continue;
-            }
-            InternalGeoDistanceFacet geoDistanceFacet = (InternalGeoDistanceFacet) facet;
-            if (agg == null) {
-                agg = geoDistanceFacet;
-            } else {
-                for (int i = 0; i < geoDistanceFacet.entries.length; i++) {
-                    agg.entries[i].count += geoDistanceFacet.entries[i].count;
-                    agg.entries[i].total += geoDistanceFacet.entries[i].total;
-                }
-            }
-        }
-        return agg;
-    }
-
     public static InternalGeoDistanceFacet readGeoDistanceFacet(StreamInput in) throws IOException {
         InternalGeoDistanceFacet facet = new InternalGeoDistanceFacet();
         facet.readFrom(in);
@@ -137,49 +100,43 @@ public class InternalGeoDistanceFacet implements GeoDistanceFacet, InternalFacet
 
     @Override public void readFrom(StreamInput in) throws IOException {
         name = in.readUTF();
-        fieldName = in.readUTF();
-        valueFieldName = in.readUTF();
-        unit = DistanceUnit.readDistanceUnit(in);
         entries = new Entry[in.readVInt()];
         for (int i = 0; i < entries.length; i++) {
-            entries[i] = new Entry(in.readDouble(), in.readDouble(), in.readVLong(), in.readDouble());
+            entries[i] = new Entry(in.readDouble(), in.readDouble(), in.readVLong(), in.readVLong(), in.readDouble(), in.readDouble(), in.readDouble());
         }
     }
 
     @Override public void writeTo(StreamOutput out) throws IOException {
         out.writeUTF(name);
-        out.writeUTF(fieldName);
-        out.writeUTF(valueFieldName);
-        DistanceUnit.writeDistanceUnit(out, unit);
         out.writeVInt(entries.length);
         for (Entry entry : entries) {
             out.writeDouble(entry.from);
             out.writeDouble(entry.to);
             out.writeVLong(entry.count);
+            out.writeVLong(entry.totalCount);
             out.writeDouble(entry.total);
+            out.writeDouble(entry.min);
+            out.writeDouble(entry.max);
         }
     }
 
 
     static final class Fields {
         static final XContentBuilderString _TYPE = new XContentBuilderString("_type");
-        static final XContentBuilderString _FIELD = new XContentBuilderString("_field");
-        static final XContentBuilderString _VALUE_FIELD = new XContentBuilderString("_value_field");
-        static final XContentBuilderString _UNIT = new XContentBuilderString("_unit");
         static final XContentBuilderString RANGES = new XContentBuilderString("ranges");
         static final XContentBuilderString FROM = new XContentBuilderString("from");
         static final XContentBuilderString TO = new XContentBuilderString("to");
         static final XContentBuilderString COUNT = new XContentBuilderString("count");
+        static final XContentBuilderString TOTAL_COUNT = new XContentBuilderString("total_count");
         static final XContentBuilderString TOTAL = new XContentBuilderString("total");
         static final XContentBuilderString MEAN = new XContentBuilderString("mean");
+        static final XContentBuilderString MIN = new XContentBuilderString("min");
+        static final XContentBuilderString MAX = new XContentBuilderString("max");
     }
 
-    @Override public void toXContent(XContentBuilder builder, Params params) throws IOException {
+    @Override public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject(name);
-        builder.field(Fields._TYPE, "geo_distance");
-        builder.field(Fields._FIELD, fieldName);
-        builder.field(Fields._VALUE_FIELD, valueFieldName);
-        builder.field(Fields._UNIT, unit);
+        builder.field(Fields._TYPE, GeoDistanceFacet.TYPE);
         builder.startArray(Fields.RANGES);
         for (Entry entry : entries) {
             builder.startObject();
@@ -189,12 +146,15 @@ public class InternalGeoDistanceFacet implements GeoDistanceFacet, InternalFacet
             if (!Double.isInfinite(entry.to)) {
                 builder.field(Fields.TO, entry.to);
             }
-            builder.field(Fields.COUNT, entry.count());
+            builder.field(Fields.MIN, entry.min());
+            builder.field(Fields.MAX, entry.max());
+            builder.field(Fields.TOTAL_COUNT, entry.totalCount());
             builder.field(Fields.TOTAL, entry.total());
             builder.field(Fields.MEAN, entry.mean());
             builder.endObject();
         }
         builder.endArray();
         builder.endObject();
+        return builder;
     }
 }

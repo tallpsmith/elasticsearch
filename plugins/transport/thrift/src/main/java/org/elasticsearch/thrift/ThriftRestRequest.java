@@ -21,13 +21,11 @@ package org.elasticsearch.thrift;
 
 import org.elasticsearch.common.Bytes;
 import org.elasticsearch.common.Unicode;
-import org.elasticsearch.common.collect.ImmutableSet;
 import org.elasticsearch.rest.support.AbstractRestRequest;
 import org.elasticsearch.rest.support.RestUtils;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * @author kimchy (shay.banon)
@@ -36,7 +34,7 @@ public class ThriftRestRequest extends AbstractRestRequest implements org.elasti
 
     private final org.elasticsearch.thrift.RestRequest request;
 
-    private final String path;
+    private final String rawPath;
 
     private final Map<String, String> params;
 
@@ -46,9 +44,9 @@ public class ThriftRestRequest extends AbstractRestRequest implements org.elasti
 
         int pathEndPos = request.getUri().indexOf('?');
         if (pathEndPos < 0) {
-            this.path = request.getUri();
+            this.rawPath = request.getUri();
         } else {
-            this.path = request.getUri().substring(0, pathEndPos);
+            this.rawPath = request.getUri().substring(0, pathEndPos);
             RestUtils.decodeQueryString(request.getUri(), pathEndPos + 1, params);
         }
     }
@@ -75,8 +73,8 @@ public class ThriftRestRequest extends AbstractRestRequest implements org.elasti
         return request.getUri();
     }
 
-    @Override public String path() {
-        return this.path;
+    @Override public String rawPath() {
+        return this.rawPath;
     }
 
     @Override public boolean hasContent() {
@@ -115,22 +113,11 @@ public class ThriftRestRequest extends AbstractRestRequest implements org.elasti
         return Unicode.fromBytes(contentByteArray(), contentByteArrayOffset(), contentLength());
     }
 
-    @Override public Set<String> headerNames() {
-        if (request.getHeaders() == null) {
-            return ImmutableSet.of();
-        }
-        return request.getHeaders().keySet();
-    }
-
     @Override public String header(String name) {
         if (request.getHeaders() == null) {
             return null;
         }
         return request.getHeaders().get(name);
-    }
-
-    @Override public String cookie() {
-        return null;
     }
 
     @Override public boolean hasParam(String key) {

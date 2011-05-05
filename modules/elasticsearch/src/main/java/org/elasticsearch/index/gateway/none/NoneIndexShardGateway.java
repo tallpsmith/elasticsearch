@@ -65,7 +65,7 @@ public class NoneIndexShardGateway extends AbstractIndexShardComponent implement
         } catch (IOException e) {
             logger.warn("failed to clean store before starting shard", e);
         }
-        indexShard.start();
+        indexShard.start("post recovery from gateway");
         recoveryStatus.index().time(System.currentTimeMillis() - recoveryStatus.index().startTime());
         recoveryStatus.translog().startTime(System.currentTimeMillis());
         recoveryStatus.translog().time(System.currentTimeMillis() - recoveryStatus.index().startTime());
@@ -85,6 +85,10 @@ public class NoneIndexShardGateway extends AbstractIndexShardComponent implement
 
     @Override public SnapshotStatus currentSnapshotStatus() {
         return null;
+    }
+
+    @Override public boolean requiresSnapshot() {
+        return false;
     }
 
     @Override public boolean requiresSnapshotScheduling() {

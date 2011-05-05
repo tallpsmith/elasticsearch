@@ -37,6 +37,8 @@ public class HistogramFacetBuilder extends AbstractFacetBuilder {
     private String valueFieldName;
     private long interval = -1;
     private HistogramFacet.ComparatorType comparatorType;
+    private Object from;
+    private Object to;
 
     /**
      * Constructs a new histogram facet with the provided facet logical name.
@@ -53,7 +55,6 @@ public class HistogramFacetBuilder extends AbstractFacetBuilder {
      */
     public HistogramFacetBuilder field(String field) {
         this.keyFieldName = field;
-        this.valueFieldName = field;
         return this;
     }
 
@@ -91,6 +92,16 @@ public class HistogramFacetBuilder extends AbstractFacetBuilder {
         return interval(unit.toMillis(interval));
     }
 
+    /**
+     * Sets the bounds from and to for the facet. Both performs bounds check and includes only
+     * values within the bounds, and improves performance.
+     */
+    public HistogramFacetBuilder bounds(Object from, Object to) {
+        this.from = from;
+        this.to = to;
+        return this;
+    }
+
     public HistogramFacetBuilder comparator(HistogramFacet.ComparatorType comparatorType) {
         this.comparatorType = comparatorType;
         return this;
@@ -121,7 +132,7 @@ public class HistogramFacetBuilder extends AbstractFacetBuilder {
         return this;
     }
 
-    @Override public void toXContent(XContentBuilder builder, Params params) throws IOException {
+    @Override public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         if (keyFieldName == null) {
             throw new SearchSourceBuilderException("field must be set on histogram facet for facet [" + name + "]");
         }
@@ -130,14 +141,20 @@ public class HistogramFacetBuilder extends AbstractFacetBuilder {
         }
         builder.startObject(name);
 
-        builder.startObject(HistogramFacetCollectorParser.NAME);
-        if (valueFieldName != null && !keyFieldName.equals(valueFieldName)) {
+        builder.startObject(HistogramFacet.TYPE);
+        if (valueFieldName != null) {
             builder.field("key_field", keyFieldName);
             builder.field("value_field", valueFieldName);
         } else {
             builder.field("field", keyFieldName);
         }
         builder.field("interval", interval);
+
+        if (from != null && to != null) {
+            builder.field("from", from);
+            builder.field("to", to);
+        }
+
         if (comparatorType != null) {
             builder.field("comparator", comparatorType.description());
         }
@@ -146,5 +163,6 @@ public class HistogramFacetBuilder extends AbstractFacetBuilder {
         addFilterFacetAndGlobal(builder, params);
 
         builder.endObject();
+        return builder;
     }
 }
