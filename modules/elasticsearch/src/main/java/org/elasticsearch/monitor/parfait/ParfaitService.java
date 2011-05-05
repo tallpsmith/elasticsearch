@@ -12,17 +12,10 @@ import com.custardsource.parfait.timing.EventTimer;
 import com.custardsource.parfait.timing.LoggerSink;
 import com.custardsource.parfait.timing.StepMeasurementSink;
 import com.custardsource.parfait.timing.ThreadMetricSuite;
-import com.google.common.collect.Lists;
 import org.apache.commons.lang.StringUtils;
-import org.elasticsearch.action.admin.cluster.health.ClusterHealthStatus;
-import org.elasticsearch.cluster.ClusterChangedEvent;
-import org.elasticsearch.cluster.ClusterService;
-import org.elasticsearch.cluster.ClusterStateListener;
 import org.elasticsearch.common.component.AbstractLifecycleComponent;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.index.engine.robin.RobinEngine;
 import org.elasticsearch.index.shard.ShardId;
-import org.elasticsearch.jmx.JmxService;
 
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -30,17 +23,17 @@ import java.io.Reader;
 import java.io.StringReader;
 import java.util.Collections;
 import java.util.List;
-import java.util.regex.Pattern;
 
 
 public class ParfaitService extends AbstractLifecycleComponent<Void> {
+
+    public static final String ELASTICSEARCH_EVENT_GROUP = "elasticsearch" ;
+
     private final MonitorableRegistry monitorableRegistry;
     private final SelfStartingMonitoringView selfStartingMonitoringView;
 
-
     private static final int ELASTICSEARCH_PCP_CLUSTER_IDENTIFIER = 0xB01; /*NG BO1NG - funny... ok you had to be there*/
     private final EventTimer eventTimer;
-
 
     public ParfaitService(Settings settings) {
         super(settings);
@@ -72,11 +65,11 @@ public class ParfaitService extends AbstractLifecycleComponent<Void> {
         // TODO whoops, forgot that JmxView relies on the Spring @ManagedResource stuff to expose, so need to get passed in the JmxService
         final JmxView jmxView = new JmxView();
         final CompositeMonitoringView compositeMonitoringView = new CompositeMonitoringView(pcpMonitorBridge, jmxView);
-        selfStartingMonitoringView = new SelfStartingMonitoringView(compositeMonitoringView, 2000);
+        selfStartingMonitoringView = new SelfStartingMonitoringView(monitorableRegistry, compositeMonitoringView, 2000);
 
         List<StepMeasurementSink> sinks = Collections.<StepMeasurementSink>singletonList(new LoggerSink(getClass().getSimpleName()));
         eventTimer = new EventTimer("elasticsearch.index", monitorableRegistry, ThreadMetricSuite.withDefaultMetrics(), true, false, sinks);
-        eventTimer.registerMetric("elasticsearch.index");
+        eventTimer.registerMetric(ELASTICSEARCH_EVENT_GROUP);
 
 
         /** STILL HAVE THIS PROBLEM:
@@ -95,14 +88,15 @@ public class ParfaitService extends AbstractLifecycleComponent<Void> {
 
 
     public Monitorable<?> createMoniteredLongValue(String name, String description, Long initialValue) {
-        return register(new MonitoredLongValue(name, description, initialValue));
+        return register(new MonitoredLongValue(name, description, null, initialValue));
     }
 
     public MonitoredCounter createMoniteredCounter(String name, String description) {
-        return register(new MonitoredCounter(name, description));
+        return register(new MonitoredCounter(name, description, (MonitorableRegistry) null));
     }
 
 
+    @SuppressWarnings("unchecked")
     private <T extends Monitorable> T register(T monitorable) {
         // TODO need to check if the monitorable exits and resue it, this is particularly noticeable if Indexes are deleted and recreated
         // need to merge in Cowan's latest changes to see this though

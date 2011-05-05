@@ -191,7 +191,10 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
 
         System.out.println(shardId + " is starting");
         ParfaitService.MonitoredCounterBuilder counterBuilder = parfaitService.forShard(shardId);
+
+        // TODO bulk has moved...
         this.bulkOperations = counterBuilder.count("bulk");
+
         this.indexOperations = counterBuilder.count("index");
         this.createOperations = counterBuilder.count("create");
         this.deleteOperations = counterBuilder.count("delete");
@@ -276,6 +279,7 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
     }
 
     @Override public void create(Create create) throws EngineException {
+        eventTimer.getCollector().startTiming(ParfaitService.ELASTICSEARCH_EVENT_GROUP, "create");
         rwl.readLock().lock();
         try {
             IndexWriter writer = this.indexWriter;
@@ -285,6 +289,7 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
             innerCreate(create, writer);
             dirty = true;
             possibleMergeNeeded = true;
+            this.createOperations.inc();
         } catch (IOException e) {
             throw new CreateFailedEngineException(shardId, create, e);
         } catch (OutOfMemoryError e) {
@@ -292,6 +297,7 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
             throw new CreateFailedEngineException(shardId, create, e);
         } finally {
             rwl.readLock().unlock();
+            eventTimer.getCollector().stopTiming();
         }
     }
 
@@ -383,16 +389,17 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
     }
 
     @Override public void index(Index index) throws EngineException {
+        eventTimer.getCollector().startTiming(ParfaitService.ELASTICSEARCH_EVENT_GROUP, "index");
         rwl.readLock().lock();
         try {
             IndexWriter writer = this.indexWriter;
             if (writer == null) {
                 throw new EngineClosedException(shardId, failedEngine);
             }
-
             innerIndex(index, writer);
             dirty = true;
             possibleMergeNeeded = true;
+            this.indexOperations.inc();
         } catch (IOException e) {
             throw new IndexFailedEngineException(shardId, index, e);
         } catch (OutOfMemoryError e) {
@@ -400,6 +407,7 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
             throw new IndexFailedEngineException(shardId, index, e);
         } finally {
             rwl.readLock().unlock();
+            eventTimer.getCollector().stopTiming();
         }
     }
 
@@ -485,6 +493,7 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
     }
 
     @Override public void delete(Delete delete) throws EngineException {
+        eventTimer.getCollector().startTiming(ParfaitService.ELASTICSEARCH_EVENT_GROUP, "delete");
         rwl.readLock().lock();
         try {
             IndexWriter writer = this.indexWriter;
@@ -501,6 +510,7 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
             throw new DeleteFailedEngineException(shardId, delete, e);
         } finally {
             rwl.readLock().unlock();
+            eventTimer.getCollector().stopTiming();
         }
     }
 
@@ -581,6 +591,7 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
     }
 
     @Override public void delete(DeleteByQuery delete) throws EngineException {
+        eventTimer.getCollector().startTiming(ParfaitService.ELASTICSEARCH_EVENT_GROUP, "delete");
         rwl.readLock().lock();
         try {
             IndexWriter writer = this.indexWriter;
@@ -591,10 +602,12 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
             translog.add(new Translog.DeleteByQuery(delete));
             dirty = true;
             possibleMergeNeeded = true;
+            deleteOperations.inc();
         } catch (IOException e) {
             throw new DeleteByQueryFailedEngineException(shardId, delete, e);
         } finally {
             rwl.readLock().unlock();
+            eventTimer.getCollector().stopTiming();
         }
     }
 
