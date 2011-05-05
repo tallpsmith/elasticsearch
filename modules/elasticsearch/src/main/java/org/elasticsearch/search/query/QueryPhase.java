@@ -19,6 +19,7 @@
 
 package org.elasticsearch.search.query;
 
+import com.custardsource.parfait.spring.Profiled;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.search.*;
 import org.elasticsearch.action.search.SearchType;
@@ -83,6 +84,7 @@ public class QueryPhase implements SearchPhase {
         facetPhase.preProcess(context);
     }
 
+    @Profiled
     public void execute(SearchContext searchContext) throws QueryPhaseExecutionException {
         // set the filter on the searcher
         if (searchContext.scopePhases() != null) {
