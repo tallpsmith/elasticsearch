@@ -21,17 +21,18 @@ public class ParfaitModule extends AbstractModule {
         final ParfaitService parfaitService = new ParfaitService(settings);
         bind(ParfaitService.class).toInstance(parfaitService);
 
+        // TODO these eventGroups shoud be given to ParfaitService to register, it shouldn't really have the knowledge
         bindInterceptor(Matchers.subclassesOf(QueryPhase.class), Matchers.annotatedWith(Profiled.class),
-                newProfiledMethodCounter(parfaitService, "elasticsearch.search.query.count", "Search Query phase counter", "query"));
+                newProfiledMethodCounter(parfaitService, "elasticsearch.search.query.count", "Search Query phase counter", ParfaitService.SEARCH_EVENT_GROUP, "query"));
 
         // TODO need to differentiate the other methods, this is hard coded to the Delete op
         // tODO the annotations need to be on the subclass, and not the Engine class for some reason, need to understand why
         // TODO the log output has "elasticsearch:index" as the op name, that clearly should be "index:delete" (same for search, "search:query" and "search:fetch" etc..
-        bindInterceptor(Matchers.subclassesOf(Engine.class), Matchers.annotatedWith(Profiled.class), newProfiledMethodCounter(parfaitService, "elasticsearch.index.delete.count", "Delete Index Operations", "index"));
+        bindInterceptor(Matchers.subclassesOf(Engine.class), Matchers.annotatedWith(Profiled.class), newProfiledMethodCounter(parfaitService, "elasticsearch.index.delete.count", "Delete Index Operations", ParfaitService.INDEX_EVENT_GROUP, "delete"));
     }
 
-    private ProfiledMethodCounter newProfiledMethodCounter(ParfaitService parfaitService, String name, String description, String group) {
-        return new ProfiledMethodCounter(parfaitService.getEventTimer().getCollector(), parfaitService.createMoniteredCounter(name, description), group);
+    private ProfiledMethodCounter newProfiledMethodCounter(ParfaitService parfaitService, String name, String description, String eventGroup, String action) {
+        return new ProfiledMethodCounter(parfaitService.getEventTimer().getCollector(), parfaitService.createMoniteredCounter(name, description), eventGroup, action);
     }
 
 }

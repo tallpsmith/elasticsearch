@@ -21,13 +21,17 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.Reader;
 import java.io.StringReader;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
 
 public class ParfaitService extends AbstractLifecycleComponent<Void> {
 
-    public static final String ELASTICSEARCH_EVENT_GROUP = "elasticsearch" ;
+    public static final String SEARCH_EVENT_GROUP = "search" ;
+    public static final String INDEX_EVENT_GROUP = "index";
+
+    private static final List<String> EVENT_GROUPS = Arrays.asList(INDEX_EVENT_GROUP, SEARCH_EVENT_GROUP);
 
     private final MonitorableRegistry monitorableRegistry;
     private final SelfStartingMonitoringView selfStartingMonitoringView;
@@ -69,7 +73,10 @@ public class ParfaitService extends AbstractLifecycleComponent<Void> {
 
         List<StepMeasurementSink> sinks = Collections.<StepMeasurementSink>singletonList(new LoggerSink(getClass().getSimpleName()));
         eventTimer = new EventTimer("elasticsearch.index", monitorableRegistry, ThreadMetricSuite.withDefaultMetrics(), true, false, sinks);
-        eventTimer.registerMetric(ELASTICSEARCH_EVENT_GROUP);
+
+        for (String eventGroup: EVENT_GROUPS) {
+            eventTimer.registerMetric(eventGroup);
+        }
 
 
         /** STILL HAVE THIS PROBLEM:

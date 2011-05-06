@@ -31,8 +31,9 @@ import static org.mockito.Mockito.verify;
 
 @Test
 public class ProfiledMethodCounterTest {
-
+    private static final String EVENT_GROUP = "eventGroup";
     public static final String FOO = "foo";
+
     @Mock
     EventMetricCollector collector;
 
@@ -43,10 +44,11 @@ public class ProfiledMethodCounterTest {
     MethodInvocation methodInvocation;
     private ProfiledMethodCounter profiledMethodCounter;
 
+
     @BeforeMethod
     public void setUp() {
         MockitoAnnotations.initMocks(this);
-        this.profiledMethodCounter = new ProfiledMethodCounter(collector, counter, FOO);
+        this.profiledMethodCounter = new ProfiledMethodCounter(collector, counter, EVENT_GROUP, FOO);
     }
 
     public void testThatCounterIsIncrementedAndMethodInvoked() throws Throwable {
@@ -58,7 +60,7 @@ public class ProfiledMethodCounterTest {
     public void testThatEventTimerIsStartedAndStopped() throws Throwable {
         profiledMethodCounter.invoke(methodInvocation);
 
-        verify(collector).startTiming(ParfaitService.ELASTICSEARCH_EVENT_GROUP, FOO);
+        verify(collector).startTiming(EVENT_GROUP, FOO);
         verify(collector).stopTiming();
     }
 }

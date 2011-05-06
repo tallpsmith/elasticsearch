@@ -25,18 +25,20 @@ import org.elasticsearch.common.aopalliance.intercept.MethodInterceptor;
 import org.elasticsearch.common.aopalliance.intercept.MethodInvocation;
 
 class ProfiledMethodCounter implements MethodInterceptor {
-    private final String group;
+    private final String eventGroup;
     private final MonitoredCounter counter;
     private final EventMetricCollector collector;
+    private final String action;
 
-    ProfiledMethodCounter(EventMetricCollector collector, MonitoredCounter counter, String group) {
+    ProfiledMethodCounter(EventMetricCollector collector, MonitoredCounter counter, String eventGroup, String action) {
         this.counter = counter;
-        this.group = group;
+        this.eventGroup = eventGroup;
+        this.action = action;
         this.collector = collector;
     }
 
     @Override public Object invoke(MethodInvocation methodInvocation) throws Throwable {
-        collector.startTiming(ParfaitService.ELASTICSEARCH_EVENT_GROUP, group);
+        collector.startTiming(eventGroup, action);
         try {
             counter.inc();
             return methodInvocation.proceed();

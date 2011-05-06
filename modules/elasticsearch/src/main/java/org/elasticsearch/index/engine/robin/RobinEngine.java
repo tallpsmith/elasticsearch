@@ -280,7 +280,7 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
     }
 
     @Override public void create(Create create) throws EngineException {
-        eventTimer.getCollector().startTiming(ParfaitService.ELASTICSEARCH_EVENT_GROUP, "create");
+        eventTimer.getCollector().startTiming(ParfaitService.INDEX_EVENT_GROUP, "create");
         rwl.readLock().lock();
         try {
             IndexWriter writer = this.indexWriter;
@@ -390,7 +390,7 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
     }
 
     @Override public void index(Index index) throws EngineException {
-        eventTimer.getCollector().startTiming(ParfaitService.ELASTICSEARCH_EVENT_GROUP, "index");
+        eventTimer.getCollector().startTiming(ParfaitService.INDEX_EVENT_GROUP, "index");
         rwl.readLock().lock();
         try {
             IndexWriter writer = this.indexWriter;
