@@ -72,7 +72,7 @@ public class ParfaitService extends AbstractLifecycleComponent<Void> {
         selfStartingMonitoringView = new SelfStartingMonitoringView(monitorableRegistry, compositeMonitoringView, 2000);
 
         List<StepMeasurementSink> sinks = Collections.<StepMeasurementSink>singletonList(new LoggerSink(getClass().getSimpleName()));
-        eventTimer = new EventTimer("elasticsearch.index", monitorableRegistry, ThreadMetricSuite.withDefaultMetrics(), true, false, sinks);
+        eventTimer = new EventTimer("elasticsearch", monitorableRegistry, ThreadMetricSuite.withDefaultMetrics(), true, false, sinks);
 
         for (String eventGroup: EVENT_GROUPS) {
             eventTimer.registerMetric(eventGroup);
