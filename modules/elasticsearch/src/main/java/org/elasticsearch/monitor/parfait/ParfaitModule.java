@@ -39,10 +39,6 @@ public class ParfaitModule extends AbstractModule {
         bindInterceptor(Matchers.subclassesOf(DfsPhase.class), Matchers.annotatedWith(Profiled.class),
                 newProfiledMethodCounter(parfaitService, "elasticsearch.search.dfs.count", "Search DFS phase counter", ParfaitService.SEARCH_EVENT_GROUP, "dfs"));
 
-
-        // TODO need to differentiate the other methods, this is hard coded to the Delete op
-        // tODO the annotations need to be on the subclass, and not the Engine class for some reason, need to understand why
-        // TODO the log output has "elasticsearch:index" as the op name, that clearly should be "index:delete" (same for search, "search:query" and "search:fetch" etc..
         try {
             bindEngineMethodToCounterAndAction(parfaitService, RobinEngine.class.getMethod("create", Engine.Create.class));
             bindEngineMethodToCounterAndAction(parfaitService, RobinEngine.class.getMethod("index", Engine.Index.class));
