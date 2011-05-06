@@ -1,9 +1,6 @@
 package org.elasticsearch.monitor.parfait;
 
-import com.custardsource.parfait.MonitoredCounter;
 import com.custardsource.parfait.spring.Profiled;
-import org.elasticsearch.common.aopalliance.intercept.MethodInterceptor;
-import org.elasticsearch.common.aopalliance.intercept.MethodInvocation;
 import org.elasticsearch.common.inject.AbstractModule;
 import org.elasticsearch.common.inject.matcher.Matchers;
 import org.elasticsearch.common.settings.Settings;
@@ -12,31 +9,26 @@ import org.elasticsearch.search.query.QueryPhase;
 public class ParfaitModule extends AbstractModule {
     private final Settings settings;
 
-
     public ParfaitModule(Settings settings) {
         this.settings = settings;
 
     }
 
     @Override protected void configure() {
-
-        final ParfaitService  parfaitService = new ParfaitService(settings);
+        final ParfaitService parfaitService = new ParfaitService(settings);
         bind(ParfaitService.class).toInstance(parfaitService);
 
-        bindInterceptor(Matchers.subclassesOf(QueryPhase.class), Matchers.annotatedWith(Profiled.class), new MethodInterceptor() {
+        bindInterceptor(Matchers.subclassesOf(QueryPhase.class), Matchers.annotatedWith(Profiled.class),
+                newProfiledMethodCounter(parfaitService, "elasticsearch.search.query.count", "Search Query phase counter", "query"));
+    }
 
-            private MonitoredCounter queryPhaseCounter = parfaitService.createMoniteredCounter("elasticsearch.search.query.count", "Search Query phase counter");
+    private ProfiledMethodCounter newProfiledMethodCounter(ParfaitService parfaitService, String name, String description, String group) {
+        return new ProfiledMethodCounter(parfaitService.getEventTimer().getCollector(), parfaitService.createMoniteredCounter(name, description), group);
+    }
 
-            @Override public Object invoke(MethodInvocation methodInvocation) throws Throwable {
-                parfaitService.getEventTimer().getCollector().startTiming(ParfaitService.ELASTICSEARCH_EVENT_GROUP, "query");
-                try {
-                    queryPhaseCounter.inc();
-                    return methodInvocation.proceed();
-                } finally {
-                    parfaitService.getEventTimer().getCollector().stopTiming();
-                }
-            }
-        });
+
+    private ProfiledMethodCounter create(ParfaitService parfaitService, String group, String name, String description) {
+        return new ProfiledMethodCounter(parfaitService.getEventTimer().getCollector(), parfaitService.createMoniteredCounter(name, description), group);
     }
 
 
