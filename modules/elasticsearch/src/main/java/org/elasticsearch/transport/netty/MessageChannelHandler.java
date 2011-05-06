@@ -30,6 +30,7 @@ import org.elasticsearch.common.netty.channel.*;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.*;
 import org.elasticsearch.transport.support.TransportStreams;
+import org.slf4j.MDC;
 
 import java.io.IOException;
 
@@ -71,6 +72,8 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
         StreamInput streamIn = new ChannelBufferStreamInput(buffer, size);
 
         long requestId = buffer.readLong();
+        MDC.put("requestId", Long.toString(System.nanoTime(), Character.MAX_RADIX));
+
         byte status = buffer.readByte();
         boolean isRequest = TransportStreams.statusIsRequest(status);
 
