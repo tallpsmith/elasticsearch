@@ -26,10 +26,4 @@ public class ParfaitModule extends AbstractModule {
         return new ProfiledMethodCounter(parfaitService.getEventTimer().getCollector(), parfaitService.createMoniteredCounter(name, description), group);
     }
 
-
-    private ProfiledMethodCounter create(ParfaitService parfaitService, String group, String name, String description) {
-        return new ProfiledMethodCounter(parfaitService.getEventTimer().getCollector(), parfaitService.createMoniteredCounter(name, description), group);
-    }
-
-
 }
