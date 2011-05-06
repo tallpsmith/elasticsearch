@@ -29,6 +29,8 @@ public class ParfaitModule extends AbstractModule {
 
     @Override protected void configure() {
         final ParfaitService parfaitService = new ParfaitService(settings);
+        final ParfaitJvmService parfaitJvmService = new ParfaitJvmService(settings, parfaitService);
+
         bind(ParfaitService.class).toInstance(parfaitService);
 
         List<Class<? extends SearchPhase>> searchPhasesToInstrument = Arrays.asList(QueryPhase.class, FetchPhase.class, FacetPhase.class, DfsPhase.class);

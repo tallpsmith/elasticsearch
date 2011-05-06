@@ -27,7 +27,8 @@ import java.util.Collections;
 import java.util.List;
 
 
-public class ParfaitService extends AbstractLifecycleComponent<Void> {
+public class
+        ParfaitService extends AbstractLifecycleComponent<Void> {
 
     public static final String SEARCH_EVENT_GROUP = "search" ;
     public static final String INDEX_EVENT_GROUP = "index";
@@ -39,6 +40,7 @@ public class ParfaitService extends AbstractLifecycleComponent<Void> {
 
     private static final int ELASTICSEARCH_PCP_CLUSTER_IDENTIFIER = 0xB01; /*NG BO1NG - funny... ok you had to be there*/
     private final EventTimer eventTimer;
+    private MonitorableRegistry registry;
 
     public ParfaitService(Settings settings) {
         super(settings);
@@ -113,6 +115,10 @@ public class ParfaitService extends AbstractLifecycleComponent<Void> {
 
     public MonitoredCounterBuilder forShard(ShardId shardId) {
         return new MonitoredCounterBuilder(shardId);
+    }
+
+    public MonitorableRegistry getMonitorableRegistry() {
+        return monitorableRegistry;
     }
 
     public final class MonitoredCounterBuilder {
