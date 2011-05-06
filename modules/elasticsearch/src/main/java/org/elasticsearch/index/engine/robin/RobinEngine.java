@@ -20,6 +20,7 @@
 package org.elasticsearch.index.engine.robin;
 
 import com.custardsource.parfait.MonitoredCounter;
+import com.custardsource.parfait.spring.Profiled;
 import com.custardsource.parfait.timing.EventTimer;
 import org.apache.lucene.index.*;
 import org.apache.lucene.store.AlreadyClosedException;
@@ -492,8 +493,8 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
         }
     }
 
+    @Profiled
     @Override public void delete(Delete delete) throws EngineException {
-        eventTimer.getCollector().startTiming(ParfaitService.ELASTICSEARCH_EVENT_GROUP, "delete");
         rwl.readLock().lock();
         try {
             IndexWriter writer = this.indexWriter;
@@ -510,7 +511,6 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
             throw new DeleteFailedEngineException(shardId, delete, e);
         } finally {
             rwl.readLock().unlock();
-            eventTimer.getCollector().stopTiming();
         }
     }
 
@@ -590,8 +590,8 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
         }
     }
 
+    @Profiled
     @Override public void delete(DeleteByQuery delete) throws EngineException {
-        eventTimer.getCollector().startTiming(ParfaitService.ELASTICSEARCH_EVENT_GROUP, "delete");
         rwl.readLock().lock();
         try {
             IndexWriter writer = this.indexWriter;
@@ -602,12 +602,10 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
             translog.add(new Translog.DeleteByQuery(delete));
             dirty = true;
             possibleMergeNeeded = true;
-            deleteOperations.inc();
         } catch (IOException e) {
             throw new DeleteByQueryFailedEngineException(shardId, delete, e);
         } finally {
             rwl.readLock().unlock();
-            eventTimer.getCollector().stopTiming();
         }
     }
 
