@@ -43,27 +43,17 @@ public class ParfaitService extends AbstractLifecycleComponent<Void> {
     public ParfaitService(Settings settings) {
         super(settings);
         monitorableRegistry = new MonitorableRegistry();
-        // TODO metricsources etc
-        // TODO use different mmv writer name based on cluster name
-        Reader instanceData = new StringReader(""); // TODO empty for now, but could have different instance dimensions for different types of operations
-        Reader metricData = new StringReader("elasticsearch.index.bulk  1"); // TODO, put this into a resource file
-
-        IdentifierSourceSet fallbacks = IdentifierSourceSet.DEFAULT_SET;
         Boolean isData = settings.getAsBoolean("node.data", false);
         Boolean isClient = settings.getAsBoolean("node.client", false);
         boolean isServer = isData || !isClient;
 
         String nodeType = isServer ? "server" : "client";
+
+        // TODO remove this debug rubbish
         System.out.printf("isData=%s, isClient=%s, isServer=%s, nodeType=%s\n", isData, isClient, isServer, nodeType);
 
-        IdentifierSourceSet identifierSourceSet = IdentifierSourceSet.DEFAULT_SET;//new FileParsingIdentifierSourceSet(instanceData, metricData, fallbacks);
-        final PcpMmvWriter mmvWriter = new PcpMmvWriter("elasticsearch-" + nodeType + ".mmv", identifierSourceSet);
+        final PcpMmvWriter mmvWriter = new PcpMmvWriter("elasticsearch-" + nodeType + ".mmv", IdentifierSourceSet.DEFAULT_SET);
         mmvWriter.setClusterIdentifier(ELASTICSEARCH_PCP_CLUSTER_IDENTIFIER);
-
-
-        // TODO obviously this is not configured nicely yet, but shows the pattern to re-register sub-trees as domains
-        // RegexSequenceNameMapper.Replacement replacement = new RegexSequenceNameMapper.Replacement(Pattern.compile("elasticsearch.index.bulk.([^\\.]+).([^\\.+])"), "elasticsearch.index.bulk[$1/$2]");
-        // sRegexSequenceNameMapper regexSequenceNameMapper = new RegexSequenceNameMapper(Collections.singletonList(replacement));
 
         final PcpMonitorBridge pcpMonitorBridge = new PcpMonitorBridge(mmvWriter, MetricNameMapper.PASSTHROUGH_MAPPER, new MetricDescriptionTextSource(), new EmptyTextSource());
 
@@ -76,25 +66,13 @@ public class ParfaitService extends AbstractLifecycleComponent<Void> {
         loggerSink.normalizeUnits(SI.NANO(SI.SECOND), SI.MILLI(SI.SECOND));
 
         List<StepMeasurementSink> sinks = Collections.<StepMeasurementSink>singletonList(loggerSink);
-        eventTimer = new EventTimer("elasticsearch", monitorableRegistry, ThreadMetricSuite.withDefaultMetrics(), true, false, sinks);
+        boolean enableCpuCollection = true;
+        boolean enableContentionCollection = false;
+        eventTimer = new EventTimer("elasticsearch", monitorableRegistry, ThreadMetricSuite.withDefaultMetrics(), enableCpuCollection, enableContentionCollection, sinks);
 
         for (String eventGroup: EVENT_GROUPS) {
             eventTimer.registerMetric(eventGroup);
         }
-
-
-        /** STILL HAVE THIS PROBLEM:
-         *
-         * Caused by: java.lang.UnsupportedOperationException: There is already an instance of the Monitorable [elasticsearch.index.index.count] registered.
-         at com.custardsource.parfait.MonitorableRegistry.register(MonitorableRegistry.java:52)
-         at com.custardsource.parfait.AbstractMonitorable.registerSelf(AbstractMonitorable.java:36)
-         at com.custardsource.parfait.MonitoredCounter.<init>(MonitoredCounter.java:53)
-         at com.custardsource.parfait.timing.EventTimer.createMetric(EventTimer.java:105)
-         at com.custardsource.parfait.timing.EventTimer.createEventMetricCounters(EventTimer.java:110)
-         at com.custardsource.parfait.timing.EventTimer.getCounterSet(EventTimer.java:88)
-         at com.custardsource.parfait.timing.EventTimer.registerMetric(EventTimer.java:84)
-         at org.elasticsearch.index.engine.robin.RobinEngine.<init>(RobinEngine.java:145)
-         */
     }
 
 
