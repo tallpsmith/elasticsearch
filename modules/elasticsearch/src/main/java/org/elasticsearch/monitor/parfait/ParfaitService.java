@@ -17,6 +17,7 @@ import org.elasticsearch.common.component.AbstractLifecycleComponent;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.shard.ShardId;
 
+import javax.measure.unit.SI;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.Reader;
@@ -71,7 +72,10 @@ public class ParfaitService extends AbstractLifecycleComponent<Void> {
         final CompositeMonitoringView compositeMonitoringView = new CompositeMonitoringView(pcpMonitorBridge, jmxView);
         selfStartingMonitoringView = new SelfStartingMonitoringView(monitorableRegistry, compositeMonitoringView, 2000);
 
-        List<StepMeasurementSink> sinks = Collections.<StepMeasurementSink>singletonList(new LoggerSink(getClass().getSimpleName()));
+        LoggerSink loggerSink = new LoggerSink(getClass().getSimpleName());
+        loggerSink.normalizeUnits(SI.NANO(SI.SECOND), SI.MILLI(SI.SECOND));
+
+        List<StepMeasurementSink> sinks = Collections.<StepMeasurementSink>singletonList(loggerSink);
         eventTimer = new EventTimer("elasticsearch", monitorableRegistry, ThreadMetricSuite.withDefaultMetrics(), true, false, sinks);
 
         for (String eventGroup: EVENT_GROUPS) {
