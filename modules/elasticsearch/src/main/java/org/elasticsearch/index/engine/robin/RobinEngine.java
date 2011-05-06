@@ -144,19 +144,13 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
     private Throwable failedEngine = null;
     private final Object failedEngineMutex = new Object();
     private final CopyOnWriteArrayList<FailedEngineListener> failedEngineListeners = new CopyOnWriteArrayList<FailedEngineListener>();
-    private MonitoredCounter bulkOperations;
-    private MonitoredCounter indexOperations;
-    private MonitoredCounter createOperations;
-    private MonitoredCounter deleteOperations;
-    private MonitoredCounter flushOperations;
-    private EventTimer eventTimer;
 
     @Inject public RobinEngine(ShardId shardId, @IndexSettings Settings indexSettings, ThreadPool threadPool,
                                IndexSettingsService indexSettingsService,
                                Store store, SnapshotDeletionPolicy deletionPolicy, Translog translog,
                                MergePolicyProvider mergePolicyProvider, MergeSchedulerProvider mergeScheduler,
                                AnalysisService analysisService, SimilarityService similarityService,
-                               BloomCache bloomCache, ParfaitService parfaitService) throws EngineException {
+                               BloomCache bloomCache) throws EngineException {
         super(shardId, indexSettings);
         Preconditions.checkNotNull(store, "Store must be provided to the engine");
         Preconditions.checkNotNull(deletionPolicy, "Snapshot deletion policy must be provided to the engine");
@@ -188,18 +182,6 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
 
         this.indexSettingsService.addListener(applySettings);
 
-        this.eventTimer = parfaitService.getEventTimer();
-
-        System.out.println(shardId + " is starting");
-        ParfaitService.MonitoredCounterBuilder counterBuilder = parfaitService.forShard(shardId);
-
-        // TODO bulk has moved...
-        this.bulkOperations = counterBuilder.count("bulk");
-
-        this.indexOperations = counterBuilder.count("index");
-        this.createOperations = counterBuilder.count("create");
-        this.deleteOperations = counterBuilder.count("delete");
-        this.flushOperations = counterBuilder.count("flush");
     }
 
     @Override public void updateIndexingBufferSize(ByteSizeValue indexingBufferSize) {
@@ -280,7 +262,6 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
     }
 
     @Override public void create(Create create) throws EngineException {
-        eventTimer.getCollector().startTiming(ParfaitService.INDEX_EVENT_GROUP, "create");
         rwl.readLock().lock();
         try {
             IndexWriter writer = this.indexWriter;
@@ -290,7 +271,6 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
             innerCreate(create, writer);
             dirty = true;
             possibleMergeNeeded = true;
-            this.createOperations.inc();
         } catch (IOException e) {
             throw new CreateFailedEngineException(shardId, create, e);
         } catch (OutOfMemoryError e) {
@@ -298,7 +278,6 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
             throw new CreateFailedEngineException(shardId, create, e);
         } finally {
             rwl.readLock().unlock();
-            eventTimer.getCollector().stopTiming();
         }
     }
 
@@ -390,7 +369,6 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
     }
 
     @Override public void index(Index index) throws EngineException {
-        eventTimer.getCollector().startTiming(ParfaitService.INDEX_EVENT_GROUP, "index");
         rwl.readLock().lock();
         try {
             IndexWriter writer = this.indexWriter;
@@ -400,7 +378,6 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
             innerIndex(index, writer);
             dirty = true;
             possibleMergeNeeded = true;
-            this.indexOperations.inc();
         } catch (IOException e) {
             throw new IndexFailedEngineException(shardId, index, e);
         } catch (OutOfMemoryError e) {
@@ -408,7 +385,6 @@ public class RobinEngine extends AbstractIndexShardComponent implements Engine {
             throw new IndexFailedEngineException(shardId, index, e);
         } finally {
             rwl.readLock().unlock();
-            eventTimer.getCollector().stopTiming();
         }
     }
 
