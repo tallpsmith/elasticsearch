@@ -19,6 +19,7 @@
 
 package org.elasticsearch.search.fetch;
 
+import com.custardsource.parfait.spring.Profiled;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.FieldSelector;
 import org.apache.lucene.document.Fieldable;
@@ -70,6 +71,7 @@ public class FetchPhase implements SearchPhase {
     @Override public void preProcess(SearchContext context) {
     }
 
+    @Profiled
     public void execute(SearchContext context) {
         FieldSelector fieldSelector = buildFieldSelectors(context);
 

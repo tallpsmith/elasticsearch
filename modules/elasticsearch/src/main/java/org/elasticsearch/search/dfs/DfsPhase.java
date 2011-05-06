@@ -19,6 +19,7 @@
 
 package org.elasticsearch.search.dfs;
 
+import com.custardsource.parfait.spring.Profiled;
 import org.apache.lucene.index.Term;
 import org.elasticsearch.common.collect.ImmutableMap;
 import org.elasticsearch.common.thread.ThreadLocals;
@@ -47,6 +48,7 @@ public class DfsPhase implements SearchPhase {
     @Override public void preProcess(SearchContext context) {
     }
 
+    @Profiled
     public void execute(SearchContext context) {
         try {
             if (!context.queryRewritten()) {

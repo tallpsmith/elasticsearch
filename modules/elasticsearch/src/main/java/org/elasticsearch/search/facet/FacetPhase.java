@@ -19,6 +19,7 @@
 
 package org.elasticsearch.search.facet;
 
+import com.custardsource.parfait.spring.Profiled;
 import org.apache.lucene.search.*;
 import org.elasticsearch.ElasticSearchException;
 import org.elasticsearch.common.collect.ImmutableMap;
@@ -58,6 +59,7 @@ public class FacetPhase implements SearchPhase {
     @Override public void preProcess(SearchContext context) {
     }
 
+    @Profiled
     @Override public void execute(SearchContext context) throws ElasticSearchException {
         if (context.facets() == null) {
             return;

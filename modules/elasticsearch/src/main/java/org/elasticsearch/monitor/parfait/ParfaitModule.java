@@ -7,6 +7,9 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.engine.Engine;
 import org.elasticsearch.index.engine.robin.RobinEngine;
 import org.elasticsearch.index.shard.service.IndexShard;
+import org.elasticsearch.search.dfs.DfsPhase;
+import org.elasticsearch.search.facet.FacetPhase;
+import org.elasticsearch.search.fetch.FetchPhase;
 import org.elasticsearch.search.query.QueryPhase;
 
 public class ParfaitModule extends AbstractModule {
@@ -24,6 +27,13 @@ public class ParfaitModule extends AbstractModule {
         // TODO these eventGroups shoud be given to ParfaitService to register, it shouldn't really have the knowledge
         bindInterceptor(Matchers.subclassesOf(QueryPhase.class), Matchers.annotatedWith(Profiled.class),
                 newProfiledMethodCounter(parfaitService, "elasticsearch.search.query.count", "Search Query phase counter", ParfaitService.SEARCH_EVENT_GROUP, "query"));
+        bindInterceptor(Matchers.subclassesOf(FetchPhase.class), Matchers.annotatedWith(Profiled.class),
+                newProfiledMethodCounter(parfaitService, "elasticsearch.search.fetch.count", "Search Fetch phase counter", ParfaitService.SEARCH_EVENT_GROUP, "fetch"));
+        bindInterceptor(Matchers.subclassesOf(FacetPhase.class), Matchers.annotatedWith(Profiled.class),
+                        newProfiledMethodCounter(parfaitService, "elasticsearch.search.facet.count", "Search Facet phase counter", ParfaitService.SEARCH_EVENT_GROUP, "facet"));
+        bindInterceptor(Matchers.subclassesOf(DfsPhase.class), Matchers.annotatedWith(Profiled.class),
+                        newProfiledMethodCounter(parfaitService, "elasticsearch.search.dfs.count", "Search DFS phase counter", ParfaitService.SEARCH_EVENT_GROUP, "dfs"));
+
 
         // TODO need to differentiate the other methods, this is hard coded to the Delete op
         // tODO the annotations need to be on the subclass, and not the Engine class for some reason, need to understand why
