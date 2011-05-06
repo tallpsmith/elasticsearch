@@ -15,8 +15,6 @@ import org.elasticsearch.search.query.QueryPhase;
 
 import java.lang.reflect.Method;
 
-import static org.hamcrest.core.AllOf.allOf;
-
 public class ParfaitModule extends AbstractModule {
     private final Settings settings;
 
@@ -73,7 +71,7 @@ public class ParfaitModule extends AbstractModule {
         bindInterceptor(Matchers.subclassesOf(clazz), methodMatcher, newProfiledMethodCounter(parfaitService, counterName, counterDescription, eventGroup, action));
     }
 
-    private ProfiledMethodCounter newProfiledMethodCounter(ParfaitService parfaitService, String name, String description, String eventGroup, String action) {
-        return new ProfiledMethodCounter(parfaitService.getEventTimer().getCollector(), parfaitService.createMoniteredCounter(name, description), eventGroup, action);
+    private ProfiledShardBasedMethodCounter newProfiledMethodCounter(ParfaitService parfaitService, String name, String description, String eventGroup, String action) {
+        return new ProfiledShardBasedMethodCounter(parfaitService, eventGroup, action);
     }
 }
